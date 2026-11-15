@@ -5,6 +5,7 @@ development-friendly defaults. See README.md for the production checklist.
 """
 
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,7 +26,10 @@ def _load_env_file(path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
-_load_env_file(BASE_DIR / ".env")
+# Tests never read .env, so they don't use real keys (QuickPay, R2) or a real database.
+_TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
+if not _TESTING:
+    _load_env_file(BASE_DIR / ".env")
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -102,16 +106,19 @@ if os.environ.get("REDIS_URL"):
 else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
-# SQLite for development. Set DATABASE_URL-style settings for Postgres in production.
-if os.environ.get("POSTGRES_DB"):
+# Database: SQLite by default. USE_POSTGRES=true switches to PostgreSQL (settings below, from .env).
+USE_POSTGRES = env_bool("USE_POSTGRES", bool(os.environ.get("POSTGRES_DB")))
+if USE_POSTGRES:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ["POSTGRES_DB"],
+            "NAME": os.environ.get("POSTGRES_DB", "velora"),
             "USER": os.environ.get("POSTGRES_USER", "postgres"),
             "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
             "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
             "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+            "CONN_MAX_AGE": int(os.environ.get("POSTGRES_CONN_MAX_AGE", "60")),
+            "OPTIONS": {"sslmode": os.environ["POSTGRES_SSLMODE"]} if os.environ.get("POSTGRES_SSLMODE") else {},
         }
     }
 else:
@@ -140,8 +147,41 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
-# Never served over HTTP (ID documents); staff read files through the admin.
+# Never served over HTTP (ID documents, chat files); staff read files through the admin.
+# These always stay on the server's own disk – never in the public R2 bucket.
 PRIVATE_MEDIA_ROOT = Path(os.environ.get("PRIVATE_MEDIA_ROOT", BASE_DIR / "private_media"))
+
+# Public uploads (ad pictures, ad videos, profile pictures): local MEDIA_ROOT by default, or Cloudflare R2
+# with USE_R2=true. Files are then served from CDN_BASE_URL. Tests always use local files.
+USE_R2 = env_bool("USE_R2", False) and not _TESTING
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+if USE_R2:
+    from urllib.parse import urlparse
+
+    _cdn = urlparse(os.environ.get("CDN_BASE_URL", ""))
+    STORAGES["default"] = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": os.environ["R2_BUCKET"],
+            "endpoint_url": os.environ["R2_ENDPOINT"],
+            "access_key": os.environ["R2_ACCESS_KEY_ID"],
+            "secret_key": os.environ["R2_SECRET_ACCESS_KEY"],
+            "region_name": "auto",
+            "signature_version": "s3v4",
+            "addressing_style": "path",
+            "default_acl": None,  # R2 has no ACLs; the bucket's public access decides
+            "querystring_auth": False,  # plain public URLs on the CDN
+            "file_overwrite": False,
+            "custom_domain": (_cdn.netloc + _cdn.path.rstrip("/")) or None,
+            "url_protocol": f"{_cdn.scheme or 'https'}:",
+            "location": os.environ.get("R2_PREFIX", "media"),
+            "object_parameters": {"CacheControl": "public, max-age=31536000, immutable"},
+        },
+    }
+    MEDIA_URL = (os.environ.get("CDN_BASE_URL", "").rstrip("/") + "/" + os.environ.get("R2_PREFIX", "media") + "/")
 
 # Uploads: pictures are re-encoded to WebP and resized on upload.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
