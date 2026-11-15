@@ -1743,3 +1743,127 @@ class VipTests(Base):
         self.assertEqual(self.client.delete(f"/api/reviews/{res.data['id']}").status_code, 403)
         self.client.force_authenticate(self.visitor)
         self.assertEqual(self.client.delete(f"/api/reviews/{res.data['id']}").status_code, 204)
+
+
+# ---------------------------------------------------------------------------
+# E-mails
+# ---------------------------------------------------------------------------
+from django.core import mail  # noqa: E402
+
+
+@override_settings(EMAIL_BRAND_NAME="KingOfBabes", DEFAULT_FROM_EMAIL="no-reply@kingofbabes.test",
+                   PUBLIC_SITE_URL="https://kingofbabes.test")
+class EmailTests(Base):
+    def setUp(self):
+        from django.core.cache import cache
+        super().setUp()
+        cache.clear()  # auth endpoints are rate-limited
+
+    def last(self):
+        return mail.outbox[-1]
+
+    def test_signup_sends_branded_welcome_with_confirm_link(self):
+        mail.outbox.clear()
+        r = self.client.post("/api/auth/signup", {"email": "new@test.dk", "password": "pw-Strong-123",
+                                                   "display_name": "New", "confirm_adult": True, "accept_terms": True}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        m = self.last()
+        self.assertEqual(m.from_email, "KingOfBabes <no-reply@kingofbabes.test>")
+        self.assertIn("confirm", m.subject.lower())
+        self.assertIn("https://kingofbabes.test/confirm-email?token=", m.body)
+        html = m.alternatives[0][0]
+        self.assertIn("KingOfBabes", html)
+        self.assertIn("Confirm my e-mail", html)
+
+    def test_forgot_and_reset_password(self):
+        mail.outbox.clear()
+        self.client.post("/api/auth/forgot-password", {"email": "nobody@test.dk"}, format="json")
+        self.assertEqual(len(mail.outbox), 0)  # same answer, no e-mail for unknown addresses
+        r = self.client.post("/api/auth/forgot-password", {"email": "ADV@test.dk"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        body = self.last().body
+        self.assertIn("reset your password", self.last().subject)
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(body[body.index("https://kingofbabes.test/reset-password"):].split()[0]).query)
+        uid, token = q["uid"][0], q["token"][0]
+        self.assertTrue(self.client.post("/api/auth/reset-password", {"uid": uid, "token": token}, format="json").data["valid"])
+        self.assertEqual(self.client.post("/api/auth/reset-password", {"uid": uid, "token": token, "new_password": "123"},
+                                          format="json").status_code, 400)
+        r = self.client.post("/api/auth/reset-password", {"uid": uid, "token": token, "new_password": "New-Strong-456"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.adv.refresh_from_db()
+        self.assertTrue(self.adv.check_password("New-Strong-456"))
+        self.assertIn("password was changed", self.last().subject)
+        # The link only works once.
+        self.assertEqual(self.client.post("/api/auth/reset-password", {"uid": uid, "token": token}, format="json").status_code, 400)
+
+    def test_login_alert_only_on_new_browser(self):
+        mail.outbox.clear()
+        self.client.post("/api/auth/login", {"email": "adv@test.dk", "password": "pw-Strong-123"}, format="json")
+        self.assertIn("new sign-in", self.last().subject)
+        n = len(mail.outbox)
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/login", {"email": "adv@test.dk", "password": "pw-Strong-123"}, format="json")
+        self.assertEqual(len(mail.outbox), n)  # same browser (cookie) → no second alert
+
+    def test_change_email_tells_old_address(self):
+        self.client.force_authenticate(self.adv)
+        mail.outbox.clear()
+        r = self.client.post("/api/account/email-change", {"email": "moved@test.dk", "password": "pw-Strong-123"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn("adv@test.dk", [m.to[0] for m in mail.outbox])
+        self.assertIn("moved@test.dk", [m.to[0] for m in mail.outbox])  # confirmation for the new one
+
+    def test_events_send_emails(self):
+        from .models import IdVerification
+        mail.outbox.clear()
+        ad = self.make_ad(status=Ad.Status.PENDING)
+        ad.status = Ad.Status.ACTIVE
+        ad.save()
+        self.assertIn("your ad is live", self.last().subject)
+        v = IdVerification.objects.create(user=self.adv, document_type="passport", full_name="A B", date_of_birth="1990-01-01")
+        v.decide(False, reason="Blurry picture")
+        self.assertIn("not approved", self.last().subject)
+        self.assertIn("Blurry picture", self.last().body)
+        # VIP bought with coins
+        product = Product.objects.filter(kind=Product.Kind.MEMBERSHIP).first()
+        self.visitor.diamonds = 100
+        self.visitor.save()
+        from . import membership
+        membership.buy_with_coins(self.visitor, product)
+        self.assertIn("welcome to VIP", self.last().subject)
+        self.assertEqual(self.last().to, [self.visitor.email])
+
+    def test_discreet_sender_hides_brand(self):
+        self.adv.sender_name = User.SenderName.NEUTRAL
+        self.adv.save()
+        mail.outbox.clear()
+        ad = self.make_ad(status=Ad.Status.PENDING)
+        ad.status = Ad.Status.ACTIVE
+        ad.save()
+        m = self.last()
+        self.assertTrue(m.subject.startswith("Notification:"))
+        self.assertNotIn("KingOfBabes", m.from_email + m.body + m.alternatives[0][0])
+
+
+@override_settings(BTPANEL_MAIL_URL="https://panel.test/mail_sys/send_mail_http.json", BTPANEL_MAIL_FROM="info@site.test",
+                   BTPANEL_MAIL_PASSWORD="pw", EMAIL_BRAND_NAME="KingOfBabes")
+class BTPanelMailTests(APITestCase):
+    def test_sends_html_through_the_panel_api(self):
+        from django.core.mail import get_connection
+
+        from . import emails, mail_backends
+        posted = []
+        with mock.patch.object(mail_backends.BTPanelEmailBackend, "_post", lambda self, data: posted.append(data) or {"status": True}):
+            with override_settings(EMAIL_BACKEND="core.mail_backends.BTPanelEmailBackend"):
+                emails.send(to="a@test.dk", subject="hello", heading="Hello", lines=["Hi"], background=False, fail_silently=False)
+        self.assertEqual(len(posted), 1)
+        d = posted[0]
+        self.assertEqual((d["mail_from"], d["password"], d["mail_to"], d["subtype"]), ("info@site.test", "pw", "a@test.dk", "html"))
+        self.assertEqual(d["subject"], "KingOfBabes: hello")
+        self.assertIn("<h1", d["content"])
+        # A refusal from the panel is reported as an error.
+        with mock.patch.object(mail_backends.BTPanelEmailBackend, "_post", lambda self, data: {"status": False, "msg": "bad password"}):
+            with self.assertRaises(mail_backends.BTPanelMailError):
+                get_connection("core.mail_backends.BTPanelEmailBackend").send_messages([mock.Mock(
+                    alternatives=[], recipients=lambda: ["a@test.dk"], subject="s", body="b")])

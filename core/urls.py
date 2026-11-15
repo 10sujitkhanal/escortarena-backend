@@ -16,6 +16,8 @@ urlpatterns = [
     path("auth/signup", views.SignupView.as_view()),
     path("auth/login", views.LoginView.as_view()),
     path("auth/logout", views.LogoutView.as_view()),
+    path("auth/forgot-password", views.ForgotPasswordView.as_view()),
+    path("auth/reset-password", views.ResetPasswordView.as_view()),
     path("account/adult-confirmation", views.AdultConfirmationView.as_view()),
     path("account/email-confirmation", views.SendConfirmationView.as_view()),
     path("account/email-confirmation/confirm", views.ConfirmEmailView.as_view()),

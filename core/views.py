@@ -175,10 +175,12 @@ class SignupView(APIView):
         )
         login(request, user)
         try:
-            account.send_confirmation(user)
+            account.send_confirmation(user, welcome=True)
         except Exception:  # mail outage must not block sign-up; user can resend from Settings
             pass
-        return Response(s.UserSerializer(user).data, status=status.HTTP_201_CREATED)
+        res = Response(s.UserSerializer(user).data, status=status.HTTP_201_CREATED)
+        account.login_alert(request, res, user, quiet=True)
+        return res
 
 
 class LoginView(APIView):
@@ -197,7 +199,55 @@ class LoginView(APIView):
         if user is None:
             raise ValidationError({"detail": "Wrong email or password."})
         login(request, user)
-        return Response(s.UserSerializer(user).data)
+        res = Response(s.UserSerializer(user).data)
+        account.login_alert(request, res, user)
+        return res
+
+
+class ForgotPasswordView(APIView):
+    """POST {email}: e-mail a reset link. Always answers the same, so it can't be used to find accounts."""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthThrottle]
+    throttle_scope = "auth"
+
+    def post(self, request):
+        from .models import User
+        email = str(request.data.get("email", "")).strip().lower()
+        user = User.objects.filter(email__iexact=email, is_active=True).first() if email else None
+        if user and user.has_usable_password():
+            account.send_password_reset(user)
+        return Response({"detail": "If an account uses that e-mail, we have sent a link to reset the password."})
+
+
+class ResetPasswordView(APIView):
+    """POST {uid, token} checks a link; POST {uid, token, new_password} sets the password and signs in."""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthThrottle]
+    throttle_scope = "auth"
+
+    def post(self, request):
+        try:
+            user = account.read_reset_link(str(request.data.get("uid", "")), str(request.data.get("token", "")))
+        except account.InvalidToken as exc:
+            raise ValidationError({"detail": str(exc)})
+        new = request.data.get("new_password")
+        if new is None:
+            return Response({"valid": True, "email": user.email})
+        try:
+            password_validation.validate_password(str(new), user)
+        except Exception as exc:  # django.core.exceptions.ValidationError
+            raise ValidationError({"new_password": list(getattr(exc, "messages", [str(exc)]))})
+        user.set_password(str(new))
+        if not user.email_confirmed:
+            user.email_confirmed = True  # they opened a link sent to this address
+        user.save(update_fields=["password", "email_confirmed"])
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        account.send_password_changed(user)
+        res = Response(s.UserSerializer(user).data)
+        account.login_alert(request, res, user, quiet=True)
+        return res
 
 
 class LogoutView(APIView):
@@ -1182,9 +1232,12 @@ class ChangeEmailView(APIView):
         if not request.user.check_password(ser.validated_data["password"]):
             raise ValidationError({"password": "Wrong password."})
         user = request.user
+        old_email = user.email
         user.email = ser.validated_data["email"]
         user.email_confirmed = False
         user.save(update_fields=["email", "email_confirmed"])
+        if old_email.lower() != user.email.lower():
+            account.send_email_changed(user, old_email)
         try:
             account.send_confirmation(user)
         except Exception:
@@ -1210,6 +1263,7 @@ class ChangePasswordView(APIView):
         user.set_password(ser.validated_data["new_password"])
         user.save(update_fields=["password"])
         update_session_auth_hash(request, user)  # stay logged in on this device
+        account.send_password_changed(user)
         return Response({"detail": "Your password has been changed."})
 
 
@@ -1603,6 +1657,8 @@ class VerificationView(APIView):
         if converting:
             user.is_advertiser = True
             user.save(update_fields=["is_advertiser"])
+        from .notifications import K, notify
+        notify(user, K.ID_RECEIVED, link="/account", key=f"idrecv:{v.pk}")
         return Response({"verified": False, "latest": verification_data(v), "is_advertiser": user.is_advertiser},
                         status=status.HTTP_201_CREATED)
 
@@ -1622,10 +1678,9 @@ class ContactThrottle(SimpleRateThrottle):
 @throttle_classes([ContactThrottle])
 def contact(request):
     """GET the topics; POST a message from the Contact us form (saved, then e-mailed to the site address)."""
-    from django.core.mail import EmailMessage
     from django.core.validators import validate_email
     from django.core.exceptions import ValidationError as DjangoValidationError
-    from .models import ContactMessage, SiteSettings
+    from .models import ContactMessage
 
     if request.method == "GET":
         return Response({"topics": [{"value": v, "label": l} for v, l in ContactMessage.Topic.choices]})
@@ -1653,15 +1708,12 @@ def contact(request):
         raise ValidationError(errors)
     msg = ContactMessage.objects.create(topic=topic, name=name, email=email, message=message,
                                         user=request.user if request.user.is_authenticated else None)
-    site = SiteSettings.load()
     to = account.site_email()
-    from .messaging import _in_background
-    _in_background(lambda: EmailMessage(
-        subject=f"[{site.site_name}] {msg.get_topic_display()} – {name}",
-        body=f"{message}\n\n—\nFrom: {name} <{email}>\nTopic: {msg.get_topic_display()}"
-             + (f"\nUser id: {request.user.pk}" if request.user.is_authenticated else ""),
-        from_email=f"{site.site_name} <{to}>", to=[to], reply_to=[email],
-    ).send(fail_silently=True))
+    from . import emails
+    emails.send(to=to, subject=f"contact form – {msg.get_topic_display()} – {name}", heading=f"New message: {msg.get_topic_display()}",
+                lines=[message, f"From: {name} <{email}>"]
+                + ([f"User id: {request.user.pk}"] if request.user.is_authenticated else []),
+                note="Reply to this e-mail to answer the sender directly.", reply=email)
     return Response({"sent": True}, status=status.HTTP_201_CREATED)
 
 

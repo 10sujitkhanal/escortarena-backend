@@ -378,20 +378,6 @@ class AdReviewAdmin(admin.ModelAdmin):
 # ---------------------------------------------------------------------------
 
 
-def notify_verification(v):
-    from django.conf import settings
-    from django.core.mail import send_mail
-
-    from . import account
-
-    from_header, prefix = account.sender(v.user)
-    if v.status == IdVerification.Status.APPROVED:
-        subject, body = "you are verified", "Your ID has been checked and your profile now shows the verified badge."
-    else:
-        subject, body = "ID verification not approved", f"We could not verify your ID: {v.reject_reason}\n\nYou can send new pictures in Settings."
-    send_mail(f"{prefix}: {subject}", f"Hi,\n\n{body}\n\n{settings.PUBLIC_SITE_URL}/account", from_header, [v.user.email], fail_silently=True)
-
-
 @admin.register(IdVerification)
 class IdVerificationAdmin(admin.ModelAdmin):
     list_display = ["user", "full_name", "document_type", "age", "status", "created_at", "reviewed_at"]
@@ -444,7 +430,6 @@ class IdVerificationAdmin(admin.ModelAdmin):
         old = IdVerification.objects.get(pk=obj.pk).status if change else None
         if change and obj.status != old and obj.status != IdVerification.Status.PENDING:
             obj.decide(obj.status == IdVerification.Status.APPROVED, by=request.user, reason=obj.reject_reason)
-            notify_verification(obj)
         else:
             super().save_model(request, obj, form, change)
 
@@ -453,7 +438,6 @@ class IdVerificationAdmin(admin.ModelAdmin):
         n = 0
         for v in queryset.filter(status=IdVerification.Status.PENDING).select_related("user"):
             v.decide(True, by=request.user)
-            notify_verification(v)
             n += 1
         self.message_user(request, f"Approved {n} verification(s).")
 
@@ -462,7 +446,6 @@ class IdVerificationAdmin(admin.ModelAdmin):
         n = 0
         for v in queryset.filter(status=IdVerification.Status.PENDING).select_related("user"):
             v.decide(False, by=request.user, reason="The pictures were unclear or did not match. Please send new ones.")
-            notify_verification(v)
             n += 1
         self.message_user(request, f"Rejected {n} verification(s).")
 

@@ -68,6 +68,10 @@ def apply_order(order: Order) -> None:
     extend(order.user, order.days)
     order.applied_at = timezone.now()
     order.save(update_fields=["applied_at", "updated_at"])
+    from .notifications import K, notify
+    user = User.objects.get(pk=order.user_id)
+    until = timezone.localtime(user.vip_until).strftime("%d %b %Y")
+    notify(user, K.VIP_STARTED, text=f"until {until}", link="/vip", key=f"vip:{order.order_id}")
 
 
 @transaction.atomic

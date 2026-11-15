@@ -7,7 +7,6 @@ e-mails contain no message text and honour the recipient's discretion setting.
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
@@ -18,7 +17,6 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
-from . import account
 from .models import Ad, Conversation, Message, MessageAttachment, MessageReaction, User, UserReport
 
 MAX_LEN = 2000
@@ -198,18 +196,11 @@ def notify(conv: Conversation, sender: User, previous_last: object) -> None:
     had_unread = previous_last is not None and (read_at is None or read_at < previous_last)
     if had_unread:
         return
-    from_header, prefix = account.sender(recipient)
-    _in_background(lambda: send_mail(
-            subject=f"{prefix}: you have a new message",
-            message=(
-                "Hi,\n\nYou have a new message waiting for you.\n\n"
-                f"Read it here: {settings.PUBLIC_SITE_URL}/messages/{conv.pk}\n\n"
-                "You can turn these e-mails off in Settings → Notifications."
-            ),
-            from_email=from_header,
-            recipient_list=[recipient.email],
-            fail_silently=True,
-        ))
+    from . import emails
+    emails.send(to=recipient.email, user=recipient, subject="you have a new message", heading="You have a new message",
+                lines=["Someone sent you a new message. Open your inbox to read it and reply."],
+                button=("Read the message", f"/messages/{conv.pk}"),
+                note="You can turn these e-mails off in Settings → Notifications.")
 
 
 def _in_background(fn) -> None:

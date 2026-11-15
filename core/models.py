@@ -1384,6 +1384,9 @@ class Notification(models.Model):
         REPORT_REVIEWED = "report_reviewed", "Report reviewed"
         OFFER = "offer", "New offer"
         FAVORITE_GONE = "favorite_gone", "Favourite ad expired"
+        ID_RECEIVED = "id_received", "ID documents received"
+        VIP_STARTED = "vip_started", "VIP membership started"
+        VIP_ENDING = "vip_ending", "VIP membership ends soon"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
     kind = models.CharField(max_length=20, choices=Kind.choices)

@@ -34,6 +34,7 @@ PAGE = 30
 SWEEP_EVERY = 300  # seconds
 EXPIRY_WARNINGS = (3, 1)  # days before expiry
 PLAN_WARNING_DAYS = 2
+VIP_WARNING_DAYS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,9 @@ def message(n: N) -> str:
         K.REPORT_REVIEWED: "Thank you – a moderator has reviewed your report.",
         K.OFFER: "New offer for you",
         K.FAVORITE_GONE: f"An ad in your favourites, {title}, has expired.",
+        K.ID_RECEIVED: "We received your ID documents. A moderator checks them, usually within 24 hours.",
+        K.VIP_STARTED: f"You are VIP{(' – ' + n.text) if n.text else ''}.",
+        K.VIP_ENDING: f"Your VIP membership ends {n.text or 'soon'}. Renew it to keep messaging advertisers.",
     }.get(n.kind, n.get_kind_display())
 
 
@@ -133,7 +137,54 @@ def notify(user, kind, *, ad=None, actor=None, text="", link="", key="") -> N | 
             return existing
     n = N.objects.create(user=user, kind=kind, ad=ad, actor_name=actor_name, text=text[:300], link=link, key=key, updated_at=now)
     _push(n)
+    email_for(n)
     return n
+
+
+# E-mails -----------------------------------------------------------------------
+# kind → (subject, button label, which user setting turns it off – None = always sent).
+# Likes, favourites and comments stay in-app only (too many e-mails).
+EMAILS = {
+    K.AD_APPROVED: ("your ad is live", "View my ad", None),
+    K.AD_REJECTED: ("your ad was not approved", "Edit my ad", None),
+    K.AD_PAUSED: ("your ad was paused", "Open my ad", None),
+    K.AD_EXPIRING: ("your ad expires soon", "Extend my ad", "notify_expiry"),
+    K.AD_EXPIRED: ("your ad has expired", "Extend my ad", "notify_expiry"),
+    K.PLAN_ENDING: ("your plan ends soon", "Renew the plan", "notify_expiry"),
+    K.PAYMENT: ("payment received – thank you", "View my payments", None),
+    K.ID_RECEIVED: ("we received your ID documents", "Open my settings", None),
+    K.ID_APPROVED: ("you are verified", "Go to My ads", None),
+    K.ID_REJECTED: ("ID verification not approved", "Send new pictures", None),
+    K.OFFER: ("a new offer for you", "See the offer", "notify_offers"),
+    K.VIP_STARTED: ("welcome to VIP", "Start messaging", None),
+    K.VIP_ENDING: ("your VIP membership ends soon", "Renew VIP", None),
+}
+
+
+def email_for(n: N) -> None:
+    rule = EMAILS.get(n.kind)
+    if not rule or not n.user.is_active or not n.user.email:
+        return
+    subject, button, pref = rule
+    if pref and not getattr(n.user, pref, True):
+        return
+    from . import emails
+    lines = [message(n)]
+    if n.kind in (K.AD_REJECTED, K.ID_REJECTED) and n.text:
+        lines.append(f"Reason: {n.text}")
+    elif n.kind == K.PAYMENT and n.text:
+        lines.append(f"Paid: {n.text}")
+    elif n.kind == K.OFFER and n.text:
+        lines.append(n.text)
+    if n.kind == K.ID_REJECTED:
+        lines.append("You can send new pictures from your settings. Your account stays an advertiser account.")
+    elif n.kind == K.ID_APPROVED:
+        lines.append("Your profile and ads now show the Verified badge.")
+    elif n.kind == K.AD_REJECTED:
+        lines.append("Fix the points above and send the ad for review again.")
+    note = "You can turn these e-mails off in Settings → Notifications." if pref else ""
+    emails.send(to=n.user.email, user=n.user, subject=subject, heading=subject[:1].upper() + subject[1:],
+                lines=lines, button=(button, n.link or "/notifications"), note=note)
 
 
 def ad_link(ad) -> str:
@@ -200,7 +251,10 @@ def _order(sender, instance, created, **kw):
     if instance.status == Order.Status.PAID and getattr(instance, "_old_status", None) != Order.Status.PAID:
         amount = f"{instance.amount / 100:,.2f} {instance.currency}"
         what = instance.product_name + (f" for “{instance.ad.title}”" if instance.ad_id and instance.ad else "")
-        notify(instance.user, K.PAYMENT, text=f"{what} · {amount}", link="/my-ads", key=f"paid:{instance.order_id}")
+        kind = instance.product.kind if instance.product_id else ""
+        link = "/vip" if kind == "membership" else "/payments" if kind == "diamonds" else (f"/my-ads/{instance.ad_id}" if instance.ad_id else "/payments")
+        if instance.amount:  # paid with money (coins-only purchases have their own messages)
+            notify(instance.user, K.PAYMENT, text=f"{what} · {amount}", link=link, key=f"paid:{instance.order_id}")
 
 
 @receiver(post_save, sender=IdVerification)
@@ -257,6 +311,11 @@ def sweep(force=False) -> int:
         sent += bool(notify(ad.owner, K.AD_EXPIRED, ad=ad, link=f"/my-ads/{ad.pk}/activate", key=f"expired:{ad.pk}:{stamp}"))
         for fav in ad.favorited_by.all():
             sent += bool(notify(fav.user, K.FAVORITE_GONE, ad=ad, link="/favorites", key=f"favgone:{ad.pk}:{stamp}"))
+
+    soon = User.objects.filter(is_active=True, vip_until__gt=now, vip_until__lte=now + timedelta(days=VIP_WARNING_DAYS))
+    for user in soon:
+        when = timezone.localtime(user.vip_until).strftime("on %d %b %Y")
+        sent += bool(notify(user, K.VIP_ENDING, text=when, link="/vip", key=f"vipend:{user.pk}:{user.vip_until:%Y%m%d%H%M}"))
 
     ending = live.exclude(tier=Tier.FREE).filter(tier_until__gt=now, tier_until__lte=now + timedelta(days=PLAN_WARNING_DAYS))
     for ad in ending.filter(expires_at__gt=F("tier_until") + timedelta(hours=1)):  # otherwise "expires soon" covers it

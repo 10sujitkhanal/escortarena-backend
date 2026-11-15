@@ -255,7 +255,17 @@ APP_VERSION = os.environ.get("APP_VERSION", "dev")
 EMAIL_BACKEND = os.environ.get(
     "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
 )
-DEFAULT_FROM_EMAIL = CONTACT_EMAIL
+# Sender of every e-mail (must be an address your SMTP provider lets you send from) and the brand name shown.
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", CONTACT_EMAIL)
+EMAIL_BRAND_NAME = os.environ.get("EMAIL_BRAND_NAME", "")
+EMAIL_TIMEOUT = 15
+# aaPanel Mail Server HTTP API (EMAIL_BACKEND=core.mail_backends.BTPanelEmailBackend)
+BTPANEL_MAIL_URL = os.environ.get("BTPANEL_MAIL_URL", "")
+BTPANEL_MAIL_FROM = os.environ.get("BTPANEL_MAIL_FROM", "")
+BTPANEL_MAIL_PASSWORD = os.environ.get("BTPANEL_MAIL_PASSWORD", "")
+BTPANEL_MAIL_VERIFY_SSL = env_bool("BTPANEL_MAIL_VERIFY_SSL", False)
+# Password reset links work for 2 hours.
+PASSWORD_RESET_TIMEOUT = int(os.environ.get("PASSWORD_RESET_TIMEOUT", 2 * 3600))
 # SMTP (used when EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend)
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
