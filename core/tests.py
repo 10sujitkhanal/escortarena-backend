@@ -684,7 +684,16 @@ class EconomyTests(Base):
         self.assertEqual([a["title"] for a in self.client.get(f"/api/ads/{self.ad.id}/similar").data["ads"]], ["Other"])
 
 
-class RealtimeTests(Base):
+from rest_framework.test import APITransactionTestCase  # noqa: E402
+
+
+class RealtimeTests(APITransactionTestCase):
+    # Channels closes database connections between async calls (like a real server). That breaks the
+    # transaction a normal TestCase wraps around each test on PostgreSQL, so this test commits for real.
+    # (Django runs TransactionTestCase classes after all TestCase classes, so its cleanup doesn't affect them.)
+    setUp = Base.setUp
+    make_ad = Base.make_ad
+
     async def test_socket_receives_new_message(self):
         from asgiref.sync import sync_to_async
         from channels.testing import WebsocketCommunicator
@@ -707,10 +716,7 @@ class RealtimeTests(Base):
         connected, _ = await ws.connect()
         self.assertTrue(connected)
 
-        def send():
-            with self.captureOnCommitCallbacks(execute=True):
-                post_message(conv, self.visitor, "Hello live")
-        await sync_to_async(send)()
+        await sync_to_async(post_message)(conv, self.visitor, "Hello live")  # autocommit: pushes right away
 
         event = await ws.receive_json_from(timeout=2)
         self.assertEqual((event["conversation_id"], event["message"]["body"], event["message"]["mine"]),

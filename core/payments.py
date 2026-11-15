@@ -204,7 +204,7 @@ def _free_checkout(user, ad: Ad | None, product: Product) -> Order:
 @transaction.atomic
 def apply_gateway_state(order_pk: int, state: dict) -> Order:
     """Update an order from a gateway payment object. Safe to call repeatedly."""
-    order = Order.objects.select_for_update().select_related("ad").get(pk=order_pk)
+    order = Order.objects.select_for_update(of=("self",)).select_related("ad").get(pk=order_pk)  # lock only the order (Postgres)
     order.last_gateway_state = state
 
     if state.get("order_id") and state["order_id"] != order.order_id:

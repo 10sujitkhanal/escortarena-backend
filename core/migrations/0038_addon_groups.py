@@ -41,6 +41,10 @@ def seed(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # PostgreSQL: deleting the old rows leaves foreign-key checks pending until commit, and the table can't be
+    # altered in the same transaction ("pending trigger events"). Run each step in its own transaction.
+    atomic = False
+
 
     dependencies = [("core", "0037_addons")]
 
