@@ -2,17 +2,28 @@ import json
 import struct
 
 from django.conf import settings
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import (
+    authenticate,
+    login,
+    logout,
+    password_validation,
+    update_session_auth_hash,
+)
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.utils.decorators import method_decorator
 from django_filters import rest_framework as df
 from rest_framework import generics, mixins, permissions, status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
+from rest_framework.decorators import (
+    action,
+    api_view,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -20,15 +31,25 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
 
-from django.contrib.auth import password_validation, update_session_auth_hash
-
-from . import account, economy, payments
+from . import account, economy, payments, slider
 from . import serializers as s
 from .images import InvalidImage, process_upload
-from . import slider
 from .models import (
-    Accessibility, Ad, AddOn, AddOnGroup, AdPicture, Heart, Order, PictureHeart, Plan,
-    Product, Report, SiteSettings, Tag, Topic, TopicHeart,
+    Accessibility,
+    Ad,
+    AddOn,
+    AddOnGroup,
+    AdPicture,
+    Heart,
+    Order,
+    PictureHeart,
+    Plan,
+    Product,
+    Report,
+    SiteSettings,
+    Tag,
+    Topic,
+    TopicHeart,
 )
 
 
@@ -74,8 +95,8 @@ def _chosen_offer(request):
 @permission_classes([permissions.AllowAny])
 def meta_areas(request):
     """Areas and places of the given countries (?countries=DK,SE) for the ad editor."""
-    from .taxonomy import editor_areas
     from .models import AdRegion
+    from .taxonomy import editor_areas
     codes = [c.strip() for c in request.query_params.get("countries", "").split(",") if c.strip()][:20]
     # ?regions=… adds the countries of an ad's saved areas (used when an existing ad is opened).
     slugs = [r.strip() for r in request.query_params.get("regions", "").split(",") if r.strip()][:20]
@@ -440,6 +461,7 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
         """Ads as pins for the map: ?country=DK. Each ad sits near its region's centre (spread a little so
         pins don't stack), plus live-ad counts per country for the zoomed-out world view."""
         import hashlib
+
         from .models import AdRegion
         centres = {r.slug: (r.lat, r.lng) for r in AdRegion.objects.exclude(lat=None).exclude(lng=None)}
         pins = []
@@ -1067,26 +1089,32 @@ class OrderStatusView(APIView):
         return Response(s.OrderSerializer(order).data)
 
 
-class QuickPayCallbackView(APIView):
-    """QuickPay server-to-server callback. Authenticated by HMAC, not by session."""
+class PaymentWingsWebhookView(APIView):
+    """PaymentWings server-to-server webhook. Authenticated by its md5 signature, not by session."""
 
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
     throttle_classes = []
 
     def post(self, request):
-        raw = request.body
-        gateway = payments.get_gateway()
-        if not gateway.verify_callback(raw, request.headers.get("QuickPay-Checksum-Sha256", "")):
-            return Response({"detail": "Invalid checksum"}, status=status.HTTP_403_FORBIDDEN)
         try:
-            state = json.loads(raw)
+            body = json.loads(request.body or b"{}")
         except ValueError:
-            return Response({"detail": "Invalid JSON"}, status=status.HTTP_400_BAD_REQUEST)
-        order = Order.objects.filter(order_id=state.get("order_id")).first()
-        if order is None or str(state.get("id")) != order.gateway_payment_id:
-            # Acknowledge so QuickPay stops retrying; nothing to do for unknown orders.
+            body = request.POST.dict()  # in case it arrives as a form
+        if not isinstance(body, dict):
+            return Response({"detail": "Invalid body"}, status=status.HTTP_400_BAD_REQUEST)
+        txn, timestamp = str(body.get("txn") or ""), str(body.get("timestamp") or "")
+        gateway = payments.get_gateway()
+        if not gateway.verify_webhook(txn, timestamp, str(body.get("signature") or "")):
+            return Response({"detail": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
+        order = Order.objects.filter(gateway=gateway.name, gateway_payment_id=txn).first()
+        metadata = body.get("metadata")
+        if order is None or (metadata and str(metadata) != order.order_id):
+            # Acknowledge so PaymentWings stops retrying; nothing to do for unknown orders.
             return Response({"detail": "Unknown order"}, status=status.HTTP_200_OK)
+        state_name = str(body.get("status") or "").lower()
+        state = {"id": txn, "accepted": state_name == "completed", "state": state_name, "source": "webhook",
+                 "timestamp": timestamp}
         try:
             payments.apply_gateway_state(order.pk, state)
         except payments.PaymentError as exc:
@@ -1095,7 +1123,7 @@ class QuickPayCallbackView(APIView):
 
 
 class FakePaymentView(APIView):
-    """Development-only stand-in for QuickPay's payment window."""
+    """Development-only stand-in for the PaymentWings checkout page."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1107,8 +1135,8 @@ class FakePaymentView(APIView):
         if result == "success":
             state = {
                 "id": order.gateway_payment_id, "order_id": order.order_id, "accepted": True,
-                "currency": order.currency, "state": "processed", "metadata": {"brand": "test-card"},
-                "operations": [{"type": "capture", "amount": order.amount, "qp_status_code": "20000"}],
+                "currency": order.currency, "state": "completed", "metadata": {"brand": "test-card"},
+                "paid_amount": order.amount,
             }
         else:
             state = {"id": order.gateway_payment_id, "order_id": order.order_id, "accepted": False,
@@ -1361,7 +1389,9 @@ def _offer_scope(o):
 def my_offers(request):
     """GET /api/offers/mine – the Offers page: offers with the user's status, plus their ads for 'Use offer'."""
     from datetime import timedelta
+
     from django.db.models import Count, Q
+
     from .models import Offer
     now = timezone.now()
     user = request.user
@@ -1678,8 +1708,9 @@ class ContactThrottle(SimpleRateThrottle):
 @throttle_classes([ContactThrottle])
 def contact(request):
     """GET the topics; POST a message from the Contact us form (saved, then e-mailed to the site address)."""
-    from django.core.validators import validate_email
     from django.core.exceptions import ValidationError as DjangoValidationError
+    from django.core.validators import validate_email
+
     from .models import ContactMessage
 
     if request.method == "GET":

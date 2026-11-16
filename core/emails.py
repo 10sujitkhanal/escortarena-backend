@@ -2,7 +2,9 @@
 
 Settings (backend/.env):
   EMAIL_BRAND_NAME    – name shown in the From header and the e-mail header (default: the site name)
-  DEFAULT_FROM_EMAIL  – the address e-mails are sent from (must be allowed by your SMTP provider)
+  DEFAULT_FROM_EMAIL  – the address every e-mail is sent from, e.g. info@escortarea.com
+  Replies go to the support address (Admin → Site settings → Contact e-mail, e.g. support@escortarea.com),
+  which also receives the contact form.
   EMAIL_BACKEND / EMAIL_HOST / EMAIL_PORT / EMAIL_HOST_USER / EMAIL_HOST_PASSWORD / EMAIL_USE_TLS – SMTP
 
 Users who chose a discreet sender (Settings → Discretion) get "Notification" as sender and subject, and no
@@ -80,7 +82,7 @@ def send(*, to: str, subject: str, heading: str, lines: list[str], button: tuple
     msg = EmailMultiAlternatives(
         subject=f"{name}: {subject}",
         body=text,
-        from_email=f"{name} <{settings.BTPANEL_MAIL_FROM or settings.DEFAULT_FROM_EMAIL}>",
+        from_email=f"{name} <{settings.DEFAULT_FROM_EMAIL or settings.BTPANEL_MAIL_FROM}>",
         to=[to],
         reply_to=[reply or reply_to()],
     )

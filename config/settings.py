@@ -26,7 +26,7 @@ def _load_env_file(path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
-# Tests never read .env, so they don't use real keys (QuickPay, R2) or a real database.
+# Tests never read .env, so they don't use real keys (PaymentWings, R2) or a real database.
 _TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 if not _TESTING:
     _load_env_file(BASE_DIR / ".env")
@@ -236,14 +236,15 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# Payments (QuickPay). Without keys, DEBUG builds use a fake local gateway.
-QUICKPAY_API_KEY = os.environ.get("QUICKPAY_API_KEY", "")
-QUICKPAY_PRIVATE_KEY = os.environ.get("QUICKPAY_PRIVATE_KEY", "")
-QUICKPAY_BASE_URL = os.environ.get("QUICKPAY_BASE_URL", "https://api.quickpay.net")
-QUICKPAY_LANGUAGE = os.environ.get("QUICKPAY_LANGUAGE", "da")
+# Payments (PaymentWings – app.paymentwings.com → Settings → API). Without keys, DEBUG builds use a fake local gateway.
+# Sandbox keys run in test mode on the same URL.
+PAYMENTWINGS_PUBLIC_KEY = os.environ.get("PAYMENTWINGS_PUBLIC_KEY", "")
+PAYMENTWINGS_PRIVATE_KEY = os.environ.get("PAYMENTWINGS_PRIVATE_KEY", "")
+PAYMENTWINGS_WEBHOOK_KEY = os.environ.get("PAYMENTWINGS_WEBHOOK_KEY", "")
+PAYMENTWINGS_BASE_URL = os.environ.get("PAYMENTWINGS_BASE_URL", "https://api.paymentwings.com")
 PAYMENTS_ALLOW_FAKE = env_bool("PAYMENTS_ALLOW_FAKE", DEBUG)
-# Public URLs: where the browser returns after paying, and where QuickPay can reach
-# the callback (the Next.js proxy forwards /api to Django).
+# Public URLs: where the browser returns after paying, and where PaymentWings can reach
+# the webhook (the Next.js proxy forwards /api to Django).
 PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "http://localhost:3000").rstrip("/")
 PUBLIC_API_URL = os.environ.get("PUBLIC_API_URL", PUBLIC_SITE_URL).rstrip("/")
 

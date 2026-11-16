@@ -1,9 +1,20 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
-from .models import Ad, AddOn, AddOnGroup, AdPicture, Order, Plan, Product, Report, SiteSettings, Tag, Topic, User
-
-
+from .models import (
+    Ad,
+    AddOn,
+    AddOnGroup,
+    AdPicture,
+    Order,
+    Plan,
+    Product,
+    Report,
+    SiteSettings,
+    Tag,
+    Topic,
+    User,
+)
 
 
 class UserSerializer(serializers.ModelSerializer):

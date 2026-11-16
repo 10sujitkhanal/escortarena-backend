@@ -1,11 +1,40 @@
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.shortcuts import redirect
 from django.utils.html import format_html
 
 from . import payments
-from django.shortcuts import redirect
-
-from .models import AdReview, AdVideo, AdCategory, AdPlace, AdRegion, ChoiceOption, Country, IdVerification, Ad, AddOn, AddOnGroup, AdPicture, Comment, Conversation, DiamondTransaction, Offer, Heart, Message, Order, Plan, Product, Report, SiteSettings, Tag, Topic, User, UserReport, ContactMessage, FaqItem
+from .models import (
+    Ad,
+    AdCategory,
+    AddOn,
+    AddOnGroup,
+    AdPicture,
+    AdPlace,
+    AdRegion,
+    AdReview,
+    AdVideo,
+    ChoiceOption,
+    Comment,
+    ContactMessage,
+    Conversation,
+    Country,
+    DiamondTransaction,
+    FaqItem,
+    Heart,
+    IdVerification,
+    Message,
+    Offer,
+    Order,
+    Plan,
+    Product,
+    Report,
+    SiteSettings,
+    Tag,
+    Topic,
+    User,
+    UserReport,
+)
 
 admin.site.site_header = "Moderation & settings"
 admin.site.site_title = "Admin"
@@ -280,7 +309,7 @@ class OrderAdmin(admin.ModelAdmin):
             payments.refresh_order(order)
         self.message_user(request, "Checked the selected orders.")
 
-    @admin.action(description="Refund full amount")
+    @admin.action(description="Mark refunded (refund the money in the PaymentWings portal first)")
     def refund(self, request, queryset):
         done = 0
         for order in queryset:
@@ -290,7 +319,8 @@ class OrderAdmin(admin.ModelAdmin):
             except payments.PaymentError as exc:
                 self.message_user(request, f"{order.order_id}: {exc}", level=messages.ERROR)
         if done:
-            self.message_user(request, f"Refunded {done} order(s). Adjust the ads' tiers if needed.")
+            self.message_user(request, f"Marked {done} order(s) refunded and took back their coins. Refund the money in the PaymentWings portal "
+                              "if you haven't yet, and adjust the ads' tiers if needed.")
 
 
 class MessageInline(admin.TabularInline):

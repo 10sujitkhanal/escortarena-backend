@@ -162,8 +162,6 @@ class AuthTests(Base):
 # ---------------------------------------------------------------------------
 
 import hashlib
-import hmac
-import json
 from datetime import timedelta
 from unittest import mock
 
@@ -173,7 +171,7 @@ from . import payments
 from .models import Order, Product
 
 
-@override_settings(QUICKPAY_API_KEY="", QUICKPAY_PRIVATE_KEY="", PAYMENTS_ALLOW_FAKE=True)
+@override_settings(PAYMENTWINGS_PUBLIC_KEY="", PAYMENTWINGS_PRIVATE_KEY="", PAYMENTS_ALLOW_FAKE=True)
 class FakePaymentFlowTests(Base):
     def setUp(self):
         super().setUp()
@@ -256,8 +254,11 @@ class FakePaymentFlowTests(Base):
         self.assertEqual(res.status_code, 400)
 
 
-@override_settings(QUICKPAY_API_KEY="api-key", QUICKPAY_PRIVATE_KEY="private-key", PUBLIC_SITE_URL="https://velora.test", PUBLIC_API_URL="https://velora.test")
-class QuickPayTests(Base):  # noqa: D101
+@override_settings(PAYMENTWINGS_PUBLIC_KEY="pub_test", PAYMENTWINGS_PRIVATE_KEY="sec_test", PAYMENTWINGS_WEBHOOK_KEY="hook-key",
+                   PUBLIC_SITE_URL="https://velora.test", PUBLIC_API_URL="https://velora.test")
+class PaymentWingsTests(Base):
+    TXN = "TRN_ABC123"
+
     def setUp(self):
         super().setUp()
         self.ad = self.make_ad()
@@ -267,77 +268,107 @@ class QuickPayTests(Base):  # noqa: D101
     def checkout(self, code="premium-30d"):
         calls = []
 
-        def fake_request(gw, method, path, body=None):
+        def fake_request(gw, method, path, body=None, auth=True):
             calls.append((method, path, body))
-            if method == "POST":
-                return {"id": 4242}
-            return {"url": "https://payment.quickpay.net/payments/abc"}
+            return {"ok": True, "data": {"object": "transaction", "transaction_id": self.TXN,
+                                         "url": f"https://pay.paymentwings.com/checkout/{self.TXN}", "mode": "sandbox"}}
 
-        with mock.patch.object(payments.QuickPayGateway, "_request", fake_request):
+        with mock.patch.object(payments.PaymentWingsGateway, "_request", fake_request):
             res = self.client.post(f"/api/my-ads/{self.ad.id}/checkout", {"product": code}, format="json")
         self.assertEqual(res.status_code, 201, res.data)
         return Order.objects.get(order_id=res.data["order_id"]), calls, res.data
 
-    def test_creates_payment_and_link(self):
+    def test_creates_payment(self):
         order, calls, data = self.checkout()
-        self.assertEqual(data["payment_url"], "https://payment.quickpay.net/payments/abc")
-        self.assertEqual(calls[0], ("POST", "/payments", {"order_id": order.order_id, "currency": "USD"}))
-        method, path, body = calls[1]
-        self.assertEqual((method, path), ("PUT", "/payments/4242/link"))
-        self.assertEqual(body["amount"], Product.objects.get(code="premium-30d").price)
-        self.assertTrue(body["auto_capture"])
-        self.assertEqual(body["callback_url"], "https://velora.test/api/payments/quickpay/callback")
-        self.assertIn(order.order_id, body["continue_url"])
+        self.assertEqual(data["payment_url"], f"https://pay.paymentwings.com/checkout/{self.TXN}")
+        self.assertEqual(order.gateway, "paymentwings")
+        self.assertEqual(order.gateway_payment_id, self.TXN)
+        method, path, body = calls[0]
+        self.assertEqual((method, path), ("POST", "/api/v2/payment/create"))
+        self.assertEqual(body["amount"], Product.objects.get(code="premium-30d").price / 100)
+        self.assertEqual(body["currency"], "USD")
+        self.assertEqual(body["metadata"], order.order_id)
+        self.assertEqual(body["webhook_url"], "https://velora.test/api/payments/paymentwings/webhook")
+        self.assertIn(order.order_id, body["success_url"])
 
-    def callback(self, payload, key="private-key"):
-        raw = json.dumps(payload).encode()
-        sig = hmac.new(key.encode(), raw, hashlib.sha256).hexdigest()
+    def test_auth_header(self):
+        gw = payments.get_gateway()
+        seen = {}
+
+        class Res:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def fake_open(req, timeout, **kw):
+            seen["auth"] = req.get_header("Authorization")
+            return Res()
+
+        with mock.patch("urllib.request.urlopen", fake_open):
+            gw._request("GET", "/x")
+        self.assertEqual(seen["auth"], "Bearer pub_test:sec_test")
+
+    def webhook(self, order, status="COMPLETED", key="hook-key", txn=None, metadata=None):
+        txn = txn or self.TXN
+        ts = "1759532400"
+        sig = hashlib.md5(f"{txn}|{ts}|{key}".encode()).hexdigest()
+        payload = {"status": status, "txn": txn, "timestamp": int(ts), "signature": sig,
+                   "metadata": metadata if metadata is not None else order.order_id}
         self.client.force_authenticate(None)
-        return self.client.generic("POST", "/api/payments/quickpay/callback", raw,
-                                   content_type="application/json", HTTP_QUICKPAY_CHECKSUM_SHA256=sig)
+        return self.client.post("/api/payments/paymentwings/webhook", payload, format="json")
 
-    def accepted(self, order, captured=None):
-        return {
-            "id": 4242, "order_id": order.order_id, "accepted": True, "currency": "USD", "state": "processed",
-            "metadata": {"brand": "visa"},
-            "operations": [{"type": "authorize", "amount": order.amount, "qp_status_code": "20000"},
-                           {"type": "capture", "amount": captured if captured is not None else order.amount, "qp_status_code": "20000"}],
-        }
-
-    def test_valid_callback_marks_paid(self):
+    def test_valid_webhook_marks_paid(self):
         order, _, _ = self.checkout()
-        self.assertEqual(self.callback(self.accepted(order)).status_code, 200)
+        self.assertEqual(self.webhook(order).status_code, 200)
         order.refresh_from_db()
         self.assertEqual(order.status, "paid")
-        self.assertEqual(order.card_brand, "visa")
         self.ad.refresh_from_db()
         self.assertEqual(self.ad.effective_tier, "premium")
+        self.assertEqual(self.webhook(order).status_code, 200)  # repeated webhook: applied once
+        self.assertEqual(Order.objects.get(pk=order.pk).status, "paid")
 
     def test_bad_signature_rejected(self):
         order, _, _ = self.checkout()
-        self.assertEqual(self.callback(self.accepted(order), key="wrong").status_code, 403)
+        self.assertEqual(self.webhook(order, key="wrong").status_code, 400)
         order.refresh_from_db()
         self.assertEqual(order.status, "pending")
 
-    def test_underpaid_capture_not_applied(self):
+    def test_not_completed_does_nothing(self):
         order, _, _ = self.checkout()
-        self.callback(self.accepted(order, captured=100))
+        self.webhook(order, status="PENDING")
         order.refresh_from_db()
         self.assertEqual(order.status, "pending")
 
-    def test_payment_id_mismatch_ignored(self):
+    def test_unknown_txn_or_wrong_metadata_ignored(self):
         order, _, _ = self.checkout()
-        payload = self.accepted(order)
-        payload["id"] = 9999
-        self.assertEqual(self.callback(payload).status_code, 200)
+        self.assertEqual(self.webhook(order, txn="TRN_OTHER").status_code, 200)
+        self.assertEqual(self.webhook(order, metadata="VLSOMETHINGELSE").status_code, 200)
         order.refresh_from_db()
         self.assertEqual(order.status, "pending")
 
-    def test_return_page_refresh_polls_quickpay(self):
+    def lookup(self, order, amount=None, currency="USD", status="COMPLETED"):
+        amount = order.amount / 100 if amount is None else amount
+        return {"status": "success", "data": {"tid": self.TXN, "status": status, "amount": amount, "currency": currency}}
+
+    def test_return_page_lookup_marks_paid(self):
         order, _, _ = self.checkout()
-        with mock.patch.object(payments.QuickPayGateway, "fetch", return_value=self.accepted(order)):
+        with mock.patch.object(payments.PaymentWingsGateway, "_request", return_value=self.lookup(order)):
             res = self.client.get(f"/api/payments/{order.order_id}")
         self.assertEqual(res.data["status"], "paid")
+
+    def test_lookup_underpaid_or_without_amount_not_applied(self):
+        order, _, _ = self.checkout()
+        with mock.patch.object(payments.PaymentWingsGateway, "_request", return_value=self.lookup(order, amount=1)):
+            self.client.get(f"/api/payments/{order.order_id}")
+        bare = {"status": "success", "data": {"tid": self.TXN, "status": "COMPLETED"}}
+        with mock.patch.object(payments.PaymentWingsGateway, "_request", return_value=bare):
+            res = self.client.get(f"/api/payments/{order.order_id}")
+        self.assertEqual(res.data["status"], "pending")
 
 
 class PictureTests(Base):
@@ -595,7 +626,7 @@ class MessagingTests(Base):
         self.assertEqual(len(self.client.get("/api/conversations").data), 1)
 
 
-@override_settings(QUICKPAY_API_KEY="", QUICKPAY_PRIVATE_KEY="", PAYMENTS_ALLOW_FAKE=True)
+@override_settings(PAYMENTWINGS_PUBLIC_KEY="", PAYMENTWINGS_PRIVATE_KEY="", PAYMENTS_ALLOW_FAKE=True)
 class EconomyTests(Base):
     def setUp(self):
         super().setUp()
@@ -609,6 +640,7 @@ class EconomyTests(Base):
 
     def test_offer_discount_applies_only_when_chosen(self):
         from datetime import timedelta
+
         from .models import Offer
         deal = Offer.objects.create(title="Day deal", discount_percent=25, applies_to="plans", ends_at=timezone.now() + timedelta(days=1))
         # Not chosen: normal prices, no offer.
@@ -652,6 +684,7 @@ class EconomyTests(Base):
 
     def test_spend_coins_on_tier_and_bump(self):
         from datetime import timedelta
+
         from .economy import add_diamonds
         self.ad.refresh_from_db()
         self.ad.expires_at = timezone.now() + timedelta(days=10)
@@ -684,7 +717,7 @@ class EconomyTests(Base):
         self.assertEqual([a["title"] for a in self.client.get(f"/api/ads/{self.ad.id}/similar").data["ads"]], ["Other"])
 
 
-from rest_framework.test import APITransactionTestCase  # noqa: E402
+from rest_framework.test import APITransactionTestCase
 
 
 class RealtimeTests(APITransactionTestCase):
@@ -764,7 +797,7 @@ class FavoritesCommentsProfileTests(Base):
         self.assertEqual(self.client.get(f"/api/advertisers/{self.visitor.pk}").status_code, 404)
 
 
-import tempfile  # noqa: E402
+import tempfile
 
 _private_tmp = tempfile.mkdtemp()
 
@@ -934,9 +967,10 @@ class CreateAdExtrasTests(Base):
         self.assertEqual(res.status_code, 201, res.data)
         self.assertEqual((res.data["places"], res.data["city"]), (["satmuhane", "lakeside"], "Satmuhane"))
         ad_id = res.data["id"]
+        from rest_framework.test import APIRequestFactory
+
         from .models import Ad
         from .serializers import AdDetailSerializer
-        from rest_framework.test import APIRequestFactory
         req = APIRequestFactory().get("/")
         req.user = self.adv
         loc = AdDetailSerializer(Ad.objects.get(pk=ad_id), context={"request": req}).data["location"]
@@ -1109,7 +1143,7 @@ class ActivationTests(Base):
     def test_addons_are_charged_and_switched_on_when_live(self):
         review_on()  # this test covers the moderator flow
         from .economy import add_diamonds
-        from .models import AddOn, Ad, Order, Product
+        from .models import Ad, AddOn, Order, Product
         opts = self.client.get(f"/api/my-ads/{self.ready_ad()}/activate").data
         groups = {g["effect"]: g for g in opts["addons"]}
         self.assertEqual([o["label"] for o in groups["top"]["options"]], ["7 days", "14 days", "30 days", "60 days"])
@@ -1239,6 +1273,7 @@ class ActivationTests(Base):
 
     def test_lower_waiting_plan_never_downgrades(self):
         from datetime import timedelta as td
+
         from .models import Ad
         a = self.ready_ad("Premium already")
         Ad.objects.filter(pk=a).update(status="active", tier="premium", tier_until=timezone.now() + td(days=20),
@@ -1343,7 +1378,7 @@ class MyAdsListTests(Base):
         self.assertEqual(self.client.delete(f"/api/my-ads/{draft.id}").status_code, 204)
 
 
-from rest_framework.test import APITransactionTestCase  # noqa: E402
+from rest_framework.test import APITransactionTestCase
 
 
 class RealtimeMessagingTests(APITransactionTestCase):
@@ -1566,7 +1601,9 @@ class NotificationTests(Base):
 
     def test_expiry_reminders_are_sent_once(self):
         from datetime import timedelta
+
         from django.utils import timezone
+
         from core.models import Favorite
         from core.notifications import sweep
         soon = self.make_ad(title="Soon")
@@ -1603,6 +1640,7 @@ class NotificationTests(Base):
 class WorldSeedTests(APITestCase):
     def test_seed_adds_inactive_areas_and_cities_that_can_be_switched_on(self):
         from django.core.management import call_command
+
         from .management.commands.seed_world import activate_country
         from .models import AdPlace, AdRegion, Country
         call_command("seed_world", stdout=io.StringIO())
@@ -1754,7 +1792,7 @@ class VipTests(Base):
 # ---------------------------------------------------------------------------
 # E-mails
 # ---------------------------------------------------------------------------
-from django.core import mail  # noqa: E402
+from django.core import mail
 
 
 @override_settings(EMAIL_BRAND_NAME="KingOfBabes", DEFAULT_FROM_EMAIL="no-reply@kingofbabes.test",
@@ -1873,3 +1911,27 @@ class BTPanelMailTests(APITestCase):
             with self.assertRaises(mail_backends.BTPanelMailError):
                 get_connection("core.mail_backends.BTPanelEmailBackend").send_messages([mock.Mock(
                     alternatives=[], recipients=lambda: ["a@test.dk"], subject="s", body="b")])
+
+
+@override_settings(DEFAULT_FROM_EMAIL="info@escortarea.test", EMAIL_BRAND_NAME="EscortArea")
+class SenderAddressTests(APITestCase):
+    def test_info_sends_support_receives(self):
+        from django.core.cache import cache
+
+        from .models import SiteSettings
+        cache.clear()
+        s = SiteSettings.load()
+        s.contact_email = "support@escortarea.test"
+        s.save()
+        user = User.objects.create_user("u@test.dk", "pw-Strong-123")
+        mail.outbox.clear()
+        self.client.post("/api/auth/forgot-password", {"email": "u@test.dk"}, format="json")
+        m = mail.outbox[-1]
+        self.assertEqual((m.from_email, m.reply_to), ("EscortArea <info@escortarea.test>", ["support@escortarea.test"]))
+        self.assertEqual(m.to, [user.email])
+        # The contact form goes to support, and replying answers the visitor.
+        r = self.client.post("/api/contact", {"topic": "general", "name": "Ann", "email": "ann@test.dk",
+                                               "message": "Hello, I have a question."}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        m = mail.outbox[-1]
+        self.assertEqual((m.to, m.reply_to, m.from_email), (["support@escortarea.test"], ["ann@test.dk"], "EscortArea <info@escortarea.test>"))

@@ -7,12 +7,12 @@ from django.core.asgi import get_asgi_application
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django_asgi_app = get_asgi_application()  # must run before importing consumers
 
-from channels.auth import AuthMiddlewareStack  # noqa: E402
-from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
-from channels.security.websocket import AllowedHostsOriginValidator  # noqa: E402
-from django.urls import path  # noqa: E402
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.security.websocket import AllowedHostsOriginValidator
+from django.urls import path
 
-from core.realtime import MessagesConsumer  # noqa: E402
+from core.realtime import MessagesConsumer
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,

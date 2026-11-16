@@ -17,7 +17,15 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
-from .models import Ad, Conversation, Message, MessageAttachment, MessageReaction, User, UserReport
+from .models import (
+    Ad,
+    Conversation,
+    Message,
+    MessageAttachment,
+    MessageReaction,
+    User,
+    UserReport,
+)
 
 MAX_LEN = 2000
 PAGE = 200  # newest messages returned for a thread

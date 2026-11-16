@@ -1,15 +1,17 @@
 import uuid
-from django.core.files.storage import FileSystemStorage
 from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
-from django.core.validators import MaxValueValidator, MinValueValidator
-from django.core.validators import FileExtensionValidator
+from django.core.files.storage import FileSystemStorage
+from django.core.validators import (
+    FileExtensionValidator,
+    MaxValueValidator,
+    MinValueValidator,
+)
 from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
-
 
 # ---------------------------------------------------------------------------
 # Default choices. The live lists are database tables (Country, Region, Category,
@@ -613,7 +615,7 @@ class SiteSettings(models.Model):
     favicon = models.ImageField(upload_to="site/", blank=True, help_text="Square PNG/ICO, at least 64×64")
     accent_color = models.CharField(max_length=7, default="#ff4fd7", help_text="Main brand colour, e.g. #ff4fd7")
     accent_color_2 = models.CharField(max_length=7, default="#9333ea", help_text="Second brand colour for gradients")
-    contact_email = models.EmailField(default="support@example.com", help_text="Used everywhere: footer, About and Contact pages, and as the sender and inbox for all e-mails from the site")
+    contact_email = models.EmailField(default="support@example.com", help_text="Support address: shown in the footer, About and Contact pages, receives the contact form, and is where replies to site e-mails go. E-mails are sent from DEFAULT_FROM_EMAIL (e.g. info@) in .env")
     country = models.CharField(max_length=40, default="Nepal")
     copyright_name = models.CharField(max_length=80, blank=True, help_text="Defaults to the site name")
     facebook_url = models.URLField(blank=True)
@@ -805,7 +807,7 @@ class AddOn(models.Model):
 
 
 def new_order_id():
-    # QuickPay order ids: 4-20 alphanumeric characters, unique per merchant.
+    # Our own order reference (sent to the gateway as metadata).
     return "VL" + uuid.uuid4().hex[:14].upper()
 
 
@@ -835,7 +837,7 @@ class Order(models.Model):
     currency = models.CharField(max_length=3)
 
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.CREATED)
-    gateway = models.CharField(max_length=20, default="quickpay")
+    gateway = models.CharField(max_length=20, default="paymentwings")
     gateway_payment_id = models.CharField(max_length=40, blank=True, db_index=True)
     payment_url = models.URLField(max_length=500, blank=True)
     card_brand = models.CharField(max_length=30, blank=True)

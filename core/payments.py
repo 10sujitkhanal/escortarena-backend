@@ -1,20 +1,18 @@
-"""Payments: QuickPay (https://learn.quickpay.net/tech-talk/api/services/) plus a fake
-gateway for local development.
+"""Payments: PaymentWings (https://paymentwings.com/docs/) plus a fake gateway for local development.
 
 Flow
-1. Advertiser picks a product for an ad -> we create an Order and a QuickPay payment
-   with a payment link (auto-capture, since the product is delivered immediately).
-2. Browser goes to QuickPay's hosted payment window. Card data never touches us.
-3. QuickPay POSTs the payment JSON to our callback URL, signed with HMAC-SHA256 of the
-   raw body using the account's *private key* (header QuickPay-Checksum-Sha256).
-4. When the payment is accepted, the order is marked paid and applied to the ad once.
-5. The return page also asks us to re-check the payment via the API, so local
-   development works even when QuickPay cannot reach the callback URL.
+1. A user picks a product -> we create an Order and a PaymentWings payment
+   (POST /api/v2/payment/create, Bearer public_key:private_key).
+2. The browser goes to PaymentWings' hosted checkout (card, Apple/Google Pay, crypto). Card data never touches us.
+3. PaymentWings POSTs a JSON webhook {status, txn, timestamp, signature, metadata} to our webhook URL.
+   signature = md5(txn|timestamp|webhook_key). A valid "COMPLETED" webhook marks the order paid; it is applied once.
+4. The return page also asks PaymentWings' lookup endpoint, so the order turns paid even if the webhook is late.
+   The lookup only counts when its amount and currency match the order.
+5. PaymentWings has no refund API: refunds are made in the PaymentWings portal, then marked here in the admin.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
@@ -22,6 +20,7 @@ import logging
 import urllib.error
 import urllib.request
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
@@ -41,21 +40,30 @@ class PaymentError(Exception):
 # ---------------------------------------------------------------------------
 
 
-class QuickPayGateway:
-    name = "quickpay"
+def to_minor(value) -> int | None:
+    """49.99 -> 4999 (every site currency has 2 decimals)."""
+    try:
+        return int((Decimal(str(value)) * 100).quantize(Decimal(1)))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
-    def __init__(self, api_key: str, private_key: str, base_url: str):
-        self.api_key = api_key
+
+class PaymentWingsGateway:
+    name = "paymentwings"
+
+    def __init__(self, public_key: str, private_key: str, webhook_key: str, base_url: str):
+        self.public_key = public_key
         self.private_key = private_key
+        self.webhook_key = webhook_key
         self.base_url = base_url.rstrip("/")
 
-    def _request(self, method: str, path: str, body: dict | None = None) -> dict:
+    def _request(self, method: str, path: str, body: dict | None = None, auth: bool = True) -> dict:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method)
-        token = base64.b64encode(f":{self.api_key}".encode()).decode()
-        req.add_header("Authorization", f"Basic {token}")
-        req.add_header("Accept-Version", "v10")
+        if auth:
+            req.add_header("Authorization", f"Bearer {self.public_key}:{self.private_key}")
         req.add_header("Accept", "application/json")
+        req.add_header("User-Agent", "Mozilla/5.0 (compatible; site-payments/1.0)")
         if data is not None:
             req.add_header("Content-Type", "application/json")
         try:
@@ -63,36 +71,53 @@ class QuickPayGateway:
                 return json.loads(res.read() or b"{}")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:500]
-            log.warning("QuickPay %s %s failed: %s %s", method, path, exc.code, detail)
-            raise PaymentError(f"QuickPay returned {exc.code}") from exc
+            log.warning("PaymentWings %s %s failed: %s %s", method, path, exc.code, detail)
+            raise PaymentError(f"PaymentWings returned {exc.code}") from exc
         except urllib.error.URLError as exc:
-            raise PaymentError("Could not reach QuickPay") from exc
+            raise PaymentError("Could not reach PaymentWings") from exc
+        except ValueError as exc:
+            raise PaymentError("Unexpected answer from PaymentWings") from exc
 
     def create_payment_link(self, order: Order, continue_url: str, cancel_url: str, callback_url: str) -> tuple[str, str]:
-        payment = self._request("POST", "/payments", {"order_id": order.order_id, "currency": order.currency})
-        link = self._request(
-            "PUT",
-            f"/payments/{payment['id']}/link",
-            {
-                "amount": order.amount,
-                "continue_url": continue_url,
-                "cancel_url": cancel_url,
-                "callback_url": callback_url,
-                "auto_capture": True,
-                "language": settings.QUICKPAY_LANGUAGE,
-            },
-        )
-        return str(payment["id"]), link["url"]
+        answer = self._request("POST", "/api/v2/payment/create", {
+            "amount": float(Decimal(order.amount) / 100),
+            "currency": order.currency,
+            "customer_email": order.user.email,
+            "success_url": continue_url,
+            "cancel_url": cancel_url,
+            "webhook_url": callback_url,
+            "metadata": order.order_id,
+        })
+        data = answer.get("data") or answer  # Bearer envelope {ok, data} or legacy {status, transaction_id, link}
+        txn, url = data.get("transaction_id"), data.get("url") or data.get("link")
+        if answer.get("ok") is False or answer.get("status") == "failed" or not (txn and url):
+            error = answer.get("error")
+            log.warning("PaymentWings create failed: %s", error)
+            raise PaymentError((error or {}).get("message") if isinstance(error, dict) else "Could not start the payment.")
+        return str(txn), url
 
     def fetch(self, payment_id: str) -> dict:
-        return self._request("GET", f"/payments/{payment_id}")
+        """Lookup endpoint -> our common state dict."""
+        answer = self._request("GET", f"/api/lookup/{payment_id}", auth=False)
+        data = answer.get("data") or {}
+        status = str(data.get("status") or "").lower()
+        return {
+            "id": str(data.get("tid") or payment_id),
+            "accepted": status == "completed",
+            "state": status or "pending",
+            "currency": data.get("currency") or None,
+            "paid_amount": to_minor(data.get("amount")),
+            "source": "lookup",
+        }
 
     def refund(self, payment_id: str, amount: int) -> dict:
-        return self._request("POST", f"/payments/{payment_id}/refund?synchronized", {"amount": amount})
+        return {"accepted": True, "manual": True}  # no refund API – refund in the PaymentWings portal
 
-    def verify_callback(self, raw_body: bytes, checksum: str) -> bool:
-        expected = hmac.new(self.private_key.encode(), raw_body, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, checksum or "")
+    def verify_webhook(self, txn: str, timestamp: str, signature: str) -> bool:
+        if not (self.webhook_key and txn and timestamp and signature):
+            return False
+        expected = hashlib.md5(f"{txn}|{timestamp}|{self.webhook_key}".encode()).hexdigest()
+        return hmac.compare_digest(expected, str(signature).lower())
 
 
 class FakeGateway:
@@ -110,13 +135,14 @@ class FakeGateway:
     def refund(self, payment_id: str, amount: int) -> dict:
         return {"accepted": True}
 
-    def verify_callback(self, raw_body, checksum):
-        return False  # the fake gateway never sends callbacks
+    def verify_webhook(self, txn, timestamp, signature):
+        return False  # the fake gateway never sends webhooks
 
 
 def get_gateway():
-    if settings.QUICKPAY_API_KEY and settings.QUICKPAY_PRIVATE_KEY:
-        return QuickPayGateway(settings.QUICKPAY_API_KEY, settings.QUICKPAY_PRIVATE_KEY, settings.QUICKPAY_BASE_URL)
+    if settings.PAYMENTWINGS_PUBLIC_KEY and settings.PAYMENTWINGS_PRIVATE_KEY:
+        return PaymentWingsGateway(settings.PAYMENTWINGS_PUBLIC_KEY, settings.PAYMENTWINGS_PRIVATE_KEY,
+                                   settings.PAYMENTWINGS_WEBHOOK_KEY, settings.PAYMENTWINGS_BASE_URL)
     if settings.PAYMENTS_ALLOW_FAKE:
         return FakeGateway()
     raise PaymentError("Payments are not configured.")
@@ -167,7 +193,7 @@ def start_checkout(user, ad: Ad | None, product: Product, offer=None, addons=())
         order,
         continue_url=f"{site}/payments/return?order={order.order_id}",
         cancel_url=f"{site}/payments/return?order={order.order_id}&cancelled=1",
-        callback_url=f"{settings.PUBLIC_API_URL}/api/payments/quickpay/callback",
+        callback_url=f"{settings.PUBLIC_API_URL}/api/payments/paymentwings/webhook",
     )
     order.gateway_payment_id = payment_id
     order.payment_url = url
@@ -209,19 +235,19 @@ def apply_gateway_state(order_pk: int, state: dict) -> Order:
 
     if state.get("order_id") and state["order_id"] != order.order_id:
         raise PaymentError("Order id mismatch")
-    if state.get("currency") and state["currency"] != order.currency:
+    if state.get("currency") and str(state["currency"]).upper() != order.currency:
         raise PaymentError("Currency mismatch")
 
     if state.get("accepted") and order.status != Order.Status.PAID:
-        captured = _captured_amount(state)
-        if captured is not None and captured < order.amount:
-            log.warning("Order %s accepted but captured %s < %s", order.order_id, captured, order.amount)
+        paid = state.get("paid_amount")
+        if (paid is None and state.get("source") == "lookup") or (paid is not None and paid < order.amount):
+            log.warning("Order %s accepted but paid %s < %s", order.order_id, paid, order.amount)
             order.save(update_fields=["last_gateway_state", "updated_at"])
             return order
         order.status = Order.Status.PAID
         order.paid_at = timezone.now()
         order.card_brand = _card_brand(state)
-    elif state.get("state") == "rejected" and order.status == Order.Status.PENDING:
+    elif state.get("state") in {"rejected", "failed", "cancelled", "expired"} and order.status == Order.Status.PENDING:
         order.status = Order.Status.FAILED
 
     order.save()
@@ -243,13 +269,6 @@ def apply_gateway_state(order_pk: int, state: dict) -> Order:
 
                 give_cashback(order)
     return order
-
-
-def _captured_amount(state: dict) -> int | None:
-    ops = state.get("operations")
-    if not ops:
-        return None
-    return sum(op.get("amount", 0) for op in ops if op.get("type") == "capture" and op.get("qp_status_code") == "20000")
 
 
 def _apply_to_ad(order: Order):

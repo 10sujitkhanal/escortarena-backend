@@ -23,7 +23,19 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from core.models import (
-    AdCategory, AdPlace, AdRegion, AddOn, ChoiceOption, Country, FaqItem, Plan, Product, SiteSettings, Tag, Topic, User,
+    AdCategory,
+    AddOn,
+    AdPlace,
+    AdRegion,
+    ChoiceOption,
+    Country,
+    FaqItem,
+    Plan,
+    Product,
+    SiteSettings,
+    Tag,
+    Topic,
+    User,
 )
 from core.site_content import FAQ, PAGE_TITLES, PAGES
 

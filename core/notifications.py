@@ -25,7 +25,19 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
-    Ad, Comment, Favorite, Heart, IdVerification, Notification as N, Offer, Order, PictureHeart, Tier, User,
+    Ad,
+    Comment,
+    Favorite,
+    Heart,
+    IdVerification,
+    Offer,
+    Order,
+    PictureHeart,
+    Tier,
+    User,
+)
+from .models import (
+    Notification as N,
 )
 
 K = N.Kind

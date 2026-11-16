@@ -2,7 +2,6 @@
 
 from django.db import migrations, models
 
-
 CENTRES = {
     "copenhagen": (55.676, 12.568), "north-zealand": (55.95, 12.3), "rest-of-zealand": (55.45, 11.7),
     "lolland": (54.77, 11.6), "north-jutland": (57.05, 9.92), "aarhus": (56.157, 10.2),

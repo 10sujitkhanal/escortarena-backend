@@ -16,8 +16,18 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core import taxonomy
 from core.models import (
-    Accessibility, Ad, AdPicture, Audience, Category, Gender, Heart, Region, Tag,
-    Tier, Topic, User,
+    Accessibility,
+    Ad,
+    AdPicture,
+    Audience,
+    Category,
+    Gender,
+    Heart,
+    Region,
+    Tag,
+    Tier,
+    Topic,
+    User,
 )
 
 NAMES = [

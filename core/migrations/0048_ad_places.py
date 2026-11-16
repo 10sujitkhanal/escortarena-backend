@@ -3,7 +3,6 @@
 import django.db.models.deletion
 from django.db import migrations, models
 
-
 PLACES = {
     "kathmandu": ["Thamel", "Baneshwor", "Boudha", "Lazimpat", "Maharajgunj", "Kalanki", "New Road", "Koteshwor"],
     "lalitpur": ["Patan", "Jawalakhel", "Pulchowk", "Sanepa", "Kupondole", "Satdobato"],

@@ -35,13 +35,13 @@ class BTPanelEmailBackend(BaseEmailBackend):
         self.url = settings.BTPANEL_MAIL_URL
         self.mail_from = settings.BTPANEL_MAIL_FROM
         self.password = settings.BTPANEL_MAIL_PASSWORD
-        self.context = None if settings.BTPANEL_MAIL_VERIFY_SSL else ssl._create_unverified_context()  # noqa: S323
+        self.context = None if settings.BTPANEL_MAIL_VERIFY_SSL else ssl._create_unverified_context()
 
     def _post(self, data: dict) -> dict:
         body = urllib.parse.urlencode(data).encode()
         req = urllib.request.Request(self.url, data=body, method="POST",
                                      headers={"Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=settings.EMAIL_TIMEOUT, context=self.context) as res:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=settings.EMAIL_TIMEOUT, context=self.context) as res:
             raw = res.read().decode("utf-8", "replace")
         try:
             return json.loads(raw)
