@@ -35,3 +35,6 @@ htmlcov/
 .idea/
 *.swp
 .DS_Store
+
+# Data moved from escortside.dk (personal data – never commit)
+data/

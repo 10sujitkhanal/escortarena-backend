@@ -23,6 +23,7 @@ from .models import (
     FaqItem,
     Heart,
     IdVerification,
+    LegacyAccount,
     Message,
     Offer,
     Order,
@@ -721,3 +722,31 @@ class FaqItemAdmin(admin.ModelAdmin):
     list_editable = ["category", "order", "is_published"]
     list_filter = ["category", "is_published"]
     search_fields = ["question", "answer"]
+
+
+@admin.register(LegacyAccount)
+class LegacyAccountAdmin(admin.ModelAdmin):
+    list_display = ("legacy_username", "user", "invited_at", "claimed_at", "reward_tier", "reward_days")
+    list_filter = (("invited_at", admin.EmptyFieldListFilter), ("claimed_at", admin.EmptyFieldListFilter), "reward_tier")
+    search_fields = ("legacy_username", "user__email")
+    readonly_fields = ("user", "ad", "legacy_id", "legacy_username", "legacy_ad_id", "data", "created_at", "claim_link")
+    actions = ["send_invite"]
+
+    @admin.display(description="Claim link")
+    def claim_link(self, obj):
+        from django.conf import settings
+
+        from . import legacy
+        return f"{settings.PUBLIC_SITE_URL}{legacy.claim_link(obj)}" if obj.pk else ""
+
+    @admin.action(description="Send the invite e-mail")
+    def send_invite(self, request, queryset):
+        from . import legacy
+        done = 0
+        for acc in queryset.filter(claimed_at__isnull=True).select_related("user"):
+            try:
+                legacy.send_invite(acc)
+                done += 1
+            except Exception as exc:  # noqa: BLE001
+                self.message_user(request, f"{acc}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"Sent {done} invite e-mail(s).")

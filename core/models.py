@@ -1408,3 +1408,30 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.user} – {self.get_kind_display()}"
+
+
+class LegacyAccount(models.Model):
+    """An account moved from escortside.dk (manage.py import_escortside). The owner claims it with the link in the
+    invite e-mail; claiming early gives their ad a free plan (see core/legacy.py)."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="legacy_accounts",
+                             help_text="Two old accounts with the same e-mail become one account here")
+    ad = models.ForeignKey(Ad, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+                           help_text="The draft ad made from the old profile")
+    legacy_id = models.PositiveIntegerField(unique=True, help_text="User id on escortside.dk")
+    legacy_username = models.CharField(max_length=150)
+    legacy_ad_id = models.PositiveIntegerField(null=True, blank=True)
+    data = models.JSONField(default=dict, blank=True, help_text="The original export rows")
+    invited_at = models.DateTimeField(null=True, blank=True, help_text="When the invite e-mail was sent (the reward clock starts here)")
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    reward_tier = models.CharField(max_length=10, blank=True, help_text="Plan given when claimed")
+    reward_days = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-legacy_id"]
+        verbose_name = "moved account (escortside.dk)"
+        verbose_name_plural = "moved accounts (escortside.dk)"
+
+    def __str__(self):
+        return f"{self.legacy_username} (#{self.legacy_id})"

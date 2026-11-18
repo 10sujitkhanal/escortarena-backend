@@ -1935,3 +1935,96 @@ class SenderAddressTests(APITestCase):
         self.assertEqual(r.status_code, 201, r.data)
         m = mail.outbox[-1]
         self.assertEqual((m.to, m.reply_to, m.from_email), (["support@escortarea.test"], ["ann@test.dk"], "EscortArea <info@escortarea.test>"))
+
+
+from . import legacy as legacy_mod  # noqa: E402
+from .models import LegacyAccount  # noqa: E402
+
+
+class EscortsideImportTests(Base):
+    USERS = [
+        {"id": "10", "username": "Anna", "email": "anna@old.dk", "contact_country_code": "+45", "contact": "12345678",
+         "is_profile_verified": "True", "age": "27", "title": "Sweet Anna", "areas": "København, Odense",
+         "is_active": "True", "is_staff": "False", "is_deleted": "False", "date_joined": "2025-01-02 10:00:00+00:00"},
+        {"id": "11", "username": "Anna2", "email": "ANNA@old.dk", "contact_country_code": "+45", "contact": "",
+         "is_profile_verified": "False", "age": "", "title": "", "areas": "Hele Danmark",
+         "is_active": "False", "is_staff": "False", "is_deleted": "False", "date_joined": ""},
+        {"id": "12", "username": "gone", "email": "gone@old.dk", "is_deleted": "True", "is_staff": "False"},
+        {"id": "13", "username": "boss", "email": "boss@old.dk", "is_deleted": "False", "is_staff": "True"},
+    ]
+    ADS = [{"id": "500", "user": "Anna", "ad_type": "Free"}]
+
+    def run_import(self):
+        return legacy_mod.import_rows(self.USERS, self.ADS)
+
+    def test_import_creates_advertisers_with_free_draft_ads(self):
+        stats = self.run_import()
+        self.assertEqual((stats["users_created"], stats["users_merged"], stats["ads_created"]), (1, 1, 2))
+        self.assertEqual(len(stats["skipped"]), 2)  # deleted + staff
+        user = User.objects.get(email="anna@old.dk")
+        self.assertTrue(user.is_advertiser and user.age_verified)
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual(user.ads.count(), 2)
+        self.assertTrue(all(a.status == "draft" and a.tier == "free" for a in user.ads.all()))
+        acc = LegacyAccount.objects.get(legacy_id=10)
+        self.assertEqual((acc.ad.title, acc.ad.age, acc.legacy_ad_id), ("Sweet Anna", 27, 500))
+        self.assertEqual(self.run_import()["ads_created"], 0)  # running again adds nothing
+
+    def test_regions(self):
+        self.assertEqual(legacy_mod.regions_for("København, Odense"), ["copenhagen", "funen"])
+        self.assertEqual(len(legacy_mod.regions_for("Hele Danmark")), 10)
+        self.assertEqual(legacy_mod.regions_for(""), [])
+
+    def test_reward_steps(self):
+        self.run_import()
+        acc = LegacyAccount.objects.get(legacy_id=10)
+        now = timezone.now()
+        for days, tier in [(0, "vip"), (29, "vip"), (31, "premium"), (59, "premium"), (61, "standard"), (95, "free")]:
+            acc.invited_at = now - timedelta(days=days)
+            self.assertEqual(legacy_mod.reward_for(acc, now)[0], tier, days)
+
+    def claim(self, **data):
+        self.client.force_authenticate(None)
+        return self.client.post("/api/auth/claim", data, format="json")
+
+    def test_claim_gives_plan_and_signs_in(self):
+        self.run_import()
+        acc = LegacyAccount.objects.get(legacy_id=10)
+        acc.invited_at = timezone.now() - timedelta(days=40)
+        acc.save()
+        token = legacy_mod.claim_token(acc)
+        info = self.claim(token=token).data
+        self.assertEqual((info["reward"]["tier"], info["ads"], info["claimed"]), ("premium", 2, False))
+        self.assertEqual(self.claim(token=token, password="New-Strong-pw-77").status_code, 400)  # 18+ not ticked
+        res = self.claim(token=token, password="New-Strong-pw-77", adult=True)
+        self.assertEqual(res.status_code, 200, res.data)
+        user = User.objects.get(email="anna@old.dk")
+        self.assertTrue(user.check_password("New-Strong-pw-77") and user.email_confirmed)
+        self.assertTrue(all(a.pending_tier == "premium" and a.pending_days == 60 for a in user.ads.all()))
+        self.assertEqual(LegacyAccount.objects.filter(user=user, claimed_at__isnull=True).count(), 0)
+        self.assertEqual(self.claim(token=token, password="Other-pw-99", adult=True).status_code, 400)  # only once
+        ad = user.ads.first()
+        ad.approve()
+        self.assertEqual(ad.effective_tier, "premium")
+
+    def test_bad_token_and_delete(self):
+        self.run_import()
+        self.assertEqual(self.claim(token="nope").status_code, 400)
+        token = legacy_mod.claim_token(LegacyAccount.objects.get(legacy_id=10))
+        self.assertTrue(self.claim(token=token, delete=True).data["deleted"])
+        self.assertFalse(User.objects.filter(email="anna@old.dk").exists())
+
+    def test_invite_email_test_mode_does_not_start_clock(self):
+        from django.core import mail as django_mail
+
+        self.run_import()
+        acc = LegacyAccount.objects.get(legacy_id=10)
+        legacy_mod.send_invite(acc, to="owner-test@example.com")
+        acc.refresh_from_db()
+        self.assertIsNone(acc.invited_at)
+        self.assertEqual(django_mail.outbox[-1].to, ["owner-test@example.com"])
+        self.assertIn("/welcome-back?token=", django_mail.outbox[-1].body)
+        legacy_mod.send_invite(acc)
+        acc.refresh_from_db()
+        self.assertIsNotNone(acc.invited_at)
+        self.assertEqual(django_mail.outbox[-1].to, ["anna@old.dk"])

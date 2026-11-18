@@ -48,6 +48,7 @@ from .models import (
     Report,
     SiteSettings,
     Tag,
+    Tier,
     Topic,
     TopicHeart,
 )
@@ -267,6 +268,56 @@ class ResetPasswordView(APIView):
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         account.send_password_changed(user)
         res = Response(s.UserSerializer(user).data)
+        account.login_alert(request, res, user, quiet=True)
+        return res
+
+
+class ClaimAccountView(APIView):
+    """Moving from escortside.dk (core/legacy.py).
+    POST {token} -> what the page shows; {token, password, adult: true} claims and signs in; {token, delete: true}."""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthThrottle]
+    throttle_scope = "auth"
+
+    def post(self, request):
+        from . import legacy
+
+        try:
+            acc = legacy.read_token(str(request.data.get("token", "")))
+        except legacy.InvalidLink as exc:
+            raise ValidationError({"detail": str(exc)})
+        user = acc.user
+        claimed = user.legacy_accounts.filter(claimed_at__isnull=False).exists()
+        if request.data.get("delete"):
+            if claimed:
+                raise ValidationError({"detail": "This profile was already moved. Delete it from Settings instead."})
+            user.delete()
+            return Response({"deleted": True})
+        password = request.data.get("password")
+        if password is None:
+            tier, days = legacy.reward_for(acc)
+            return Response({
+                "valid": True, "claimed": claimed, "email": user.email, "name": user.display_name or acc.legacy_username,
+                "old_username": acc.legacy_username, "ads": user.ads.count(),
+                "reward": {"tier": tier, "label": Tier(tier).label, "days": days},
+                "steps": [{**st, "until": st["until"].isoformat()} for st in legacy.reward_deadlines(acc)],
+            })
+        if not request.data.get("adult"):
+            raise ValidationError({"adult": ["Please confirm that you are 18 or older."]})
+        try:
+            password_validation.validate_password(str(password), user)
+        except Exception as exc:  # django.core.exceptions.ValidationError
+            raise ValidationError({"password": list(getattr(exc, "messages", [str(exc)]))})
+        try:
+            acc = legacy.claim(acc, str(password))
+        except legacy.InvalidLink as exc:
+            raise ValidationError({"detail": str(exc)})
+        user.refresh_from_db()
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        res = Response({**s.UserSerializer(user).data,
+                        "reward": {"tier": acc.reward_tier, "label": Tier(acc.reward_tier or "free").label,
+                                   "days": acc.reward_days}})
         account.login_alert(request, res, user, quiet=True)
         return res
 
