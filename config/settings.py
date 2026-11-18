@@ -219,7 +219,9 @@ REST_FRAMEWORK = {
 FRONTEND_ORIGINS = env_list("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100")
 CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = FRONTEND_ORIGINS
+# The API's own domain too, so forms on it (e.g. the Django admin) pass the CSRF check.
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(
+    FRONTEND_ORIGINS + env_list("CSRF_EXTRA_ORIGINS", "https://api.escortarea.com")))
 
 # Login lives only in the HttpOnly "session_id" cookie (the browser never sees a token in JS/localStorage).
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "session_id")
