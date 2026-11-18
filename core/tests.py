@@ -1970,6 +1970,53 @@ class EscortsideImportTests(Base):
         self.assertEqual((acc.ad.title, acc.ad.age, acc.legacy_ad_id), ("Sweet Anna", 27, 500))
         self.assertEqual(self.run_import()["ads_created"], 0)  # running again adds nothing
 
+    def test_import_maps_ticks_media_and_goes_live(self):
+        import tempfile
+        from pathlib import Path
+
+        from PIL import Image
+
+        from core.models import AdCategory, ChoiceOption
+
+        row = dict(self.USERS[0], bio="Hello", escort="True", lingerie_sale="True", woman="True", men="True",
+                   tran_s="True", anal="True", happy_ending="True", incalls="True", handicap_friendly_yes="True")
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "10_Anna" / "images"
+            folder.mkdir(parents=True)
+            for name in ("photo_2_a.jpg", "profile_1_b.jpg"):
+                Image.new("RGB", (40, 30), "red" if "photo" in name else "blue").save(folder / name)
+            (folder / "photo_3_copy.jpg").write_bytes((folder / "photo_2_a.jpg").read_bytes())  # duplicate
+            (folder / "photo_4_broken.png").write_bytes(b"not a picture")
+            stats = legacy_mod.import_rows([row], self.ADS, user_media=tmp)
+        ad = LegacyAccount.objects.get(legacy_id=10).ad
+        self.assertEqual((ad.status, ad.tier, ad.free_listing, ad.expires_at.year), ("active", "free", True, 2100))
+        self.assertEqual((ad.pictures.count(), stats["pictures"], len(stats["problems"])), (2, 2, 1))
+        self.assertEqual((ad.pictures.first().width, ad.pictures.first().height), (40, 30))
+        self.assertEqual((ad.categories, ad.gender, ad.audiences), (["escort", "lingerie-sale"], "female", ["men", "trans"]))
+        self.assertEqual([s["name"] for s in ad.services], ["Anal", "Happy ending"])
+        self.assertEqual((ad.accessibility, ad.description, ad.regions), ("yes", "Hello", ["copenhagen", "funen"]))
+        self.assertEqual(list(ad.tags.values_list("slug", flat=True)), ["incall"])
+        self.assertTrue(AdCategory.objects.filter(slug="lingerie-sale").exists())
+        self.assertTrue(ChoiceOption.objects.filter(group="service", label="Happy ending").exists())
+        self.assertTrue(ChoiceOption.objects.filter(group="audience", value="trans").exists())
+
+    def test_no_area_uses_phone_country_and_wipe_keeps_admins(self):
+        from core.models import AdRegion, Country
+
+        se, _ = Country.objects.get_or_create(code="SE", defaults={"name": "Sweden", "dial_code": "+46"})
+        AdRegion.objects.create(country=se, slug="se-stockholm", name="Stockholm")
+        row = dict(self.USERS[0], areas="", contact_country_code="+46")
+        legacy_mod.import_rows([row], [])
+        ad = LegacyAccount.objects.get(legacy_id=10).ad
+        self.assertEqual((ad.regions, ad.status), (["se-stockholm"], "draft"))  # no pictures: stays a draft
+        se.refresh_from_db()
+        self.assertTrue(se.has_ads)
+        admin = User.objects.create_superuser(email="root@example.com", password="x-Strong-pw-1")
+        gone = legacy_mod.wipe_ads_and_users()
+        self.assertGreaterEqual(gone["ads"], 1)
+        self.assertTrue(User.objects.filter(pk=admin.pk).exists())
+        self.assertFalse(User.objects.filter(email="anna@old.dk").exists())
+
     def test_regions(self):
         self.assertEqual(legacy_mod.regions_for("København, Odense"), ["copenhagen", "funen"])
         self.assertEqual(len(legacy_mod.regions_for("Hele Danmark")), 10)

@@ -1,37 +1,41 @@
 """Move users and ads from escortside.dk (see core/legacy.py).
 
+    python manage.py import_escortside --wipe                           # delete all ads + users (not admins), import
     python manage.py import_escortside                                  # import only (safe to run again)
     python manage.py import_escortside --send --test-to you@example.com  # test: 1 invite e-mail, only to you
     python manage.py import_escortside --send                           # real: invite every owner not invited yet
 
-Files: data/escortside/users.csv and data/escortside/ads.csv (Django admin exports), or --users / --ads.
+Files: data/escortside/users/ (data.csv + one picture folder per user, "123_Name/images/…") and
+data/escortside/ads/ (data.csv + "ad45_Name/images/…"), or --users / --ads with other folders.
 """
 
-import csv
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from core import legacy
+from core.management.commands._csv import read_csv
 from core.models import LegacyAccount
 
 DATA = Path(settings.BASE_DIR) / "data" / "escortside"
 
 
-def read_csv(path: Path) -> list[dict]:
-    if not path.exists():
-        raise CommandError(f"File not found: {path}")
-    with path.open(newline="", encoding="utf-8-sig") as fh:
-        return list(csv.DictReader(fh))
+def csv_and_folder(path: str) -> tuple[Path, Path]:
+    p = Path(path)
+    return (p / "data.csv", p) if p.is_dir() else (p, p.parent)
 
 
 class Command(BaseCommand):
-    help = "Import escortside.dk users and ads (all Free, not public) and optionally e-mail the claim links."
+    help = "Import escortside.dk users and ads (Free plan, with pictures) and optionally e-mail the claim links."
 
     def add_arguments(self, parser):
-        parser.add_argument("--users", default=str(DATA / "users.csv"))
-        parser.add_argument("--ads", default=str(DATA / "ads.csv"))
+        parser.add_argument("--users", default=str(DATA / "users"), help="Folder with data.csv + picture folders")
+        parser.add_argument("--ads", default=str(DATA / "ads"), help="Folder with data.csv + picture folders")
+        parser.add_argument("--wipe", action="store_true",
+                            help="First DELETE every ad and every user except staff/superusers")
+        parser.add_argument("--yes", action="store_true", help="With --wipe: don't ask for confirmation")
+        parser.add_argument("--draft", action="store_true", help="Keep all imported ads as drafts (not live)")
         parser.add_argument("--skip-inactive", action="store_true", help="Leave out accounts that were inactive")
         parser.add_argument("--send", action="store_true", help="E-mail the claim link to owners not invited yet")
         parser.add_argument("--test-to", metavar="EMAIL",
@@ -41,15 +45,30 @@ class Command(BaseCommand):
         parser.add_argument("--resend", action="store_true", help="With --send: also owners who were already invited")
 
     def handle(self, *args, **opts):
-        users = read_csv(Path(opts["users"]))
-        ads = read_csv(Path(opts["ads"]))
-        stats = legacy.import_rows(users, ads, include_inactive=not opts["skip_inactive"])
+        users_csv, users_dir = csv_and_folder(opts["users"])
+        ads_csv, ads_dir = csv_and_folder(opts["ads"])
+        users, ads = read_csv(users_csv), read_csv(ads_csv)
+
+        if opts["wipe"]:
+            if not opts["yes"] and input("Delete ALL ads and ALL users except admins? Type yes: ").strip() != "yes":
+                raise CommandError("Stopped – nothing deleted.")
+            gone = legacy.wipe_ads_and_users()
+            self.stdout.write(self.style.WARNING(f"Deleted {gone['ads']} ads and {gone['users']} users."))
+
+        self.stdout.write(f"Importing {len(users)} users (pictures from {users_dir}) …")
+        stats = legacy.import_rows(users, ads, include_inactive=not opts["skip_inactive"], user_media=users_dir,
+                                   ad_media=ads_dir, go_live=not opts["draft"])
         self.stdout.write(self.style.SUCCESS(
             f"Users: {stats['users_created']} new, {stats['users_updated']} updated, "
-            f"{stats['users_merged']} merged into an account with the same e-mail · "
-            f"draft ads created: {stats['ads_created']}"))
+            f"{stats['users_merged']} merged into an account with the same e-mail · ads created: "
+            f"{stats['ads_created']} ({stats['ads_live']} live, the rest drafts) · "
+            f"{stats['pictures']} pictures, {stats['videos']} videos"))
+        for item in stats["added"]:
+            self.stdout.write(f"  added {item}")
         for name, why in stats["skipped"]:
             self.stdout.write(f"  skipped {name}: {why}")
+        for p in stats["problems"]:
+            self.stdout.write(self.style.WARNING(f"  {p}"))
 
         if not opts["send"]:
             self.stdout.write("No e-mails sent (add --send).")
