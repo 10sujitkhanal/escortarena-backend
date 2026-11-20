@@ -508,6 +508,29 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(data)
 
     @action(detail=False)
+    def menu(self, request):
+        """Header menus (Women, Men, Trans, Clinics …): live ads per area in one country, ?country=DK.
+        {"gender": {"female": {"copenhagen": 120, …}}, "category": {"clinic": {…}}, "labels": {slug: name}}."""
+        from collections import defaultdict
+
+        from .models import AdRegion
+        from .taxonomy import regions_in_country
+        code = (request.query_params.get("country") or "").upper()[:2]
+        areas = set(regions_in_country(code) or []) if code else set()
+        by_gender: dict = defaultdict(lambda: defaultdict(int))
+        by_category: dict = defaultdict(lambda: defaultdict(int))
+        if areas:
+            for gender, region, regions, categories in Ad.objects.live().values_list("gender", "region", "regions", "categories"):
+                for r in set(regions or [region]) & areas:
+                    if gender:
+                        by_gender[gender][r] += 1
+                    for c in categories or []:
+                        by_category[c][r] += 1
+        used = {r for d in (*by_gender.values(), *by_category.values()) for r in d}
+        labels = dict(AdRegion.objects.filter(slug__in=used).values_list("slug", "name"))
+        return Response({"country": code, "gender": by_gender, "category": by_category, "labels": labels})
+
+    @action(detail=False)
     def map(self, request):
         """Ads as pins for the map: ?country=DK. Each ad sits near its region's centre (spread a little so
         pins don't stack), plus live-ad counts per country for the zoomed-out world view."""

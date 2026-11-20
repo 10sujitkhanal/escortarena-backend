@@ -2359,3 +2359,19 @@ class LogoTrimTests(APITestCase):
         s.save()  # saving other settings leaves the logo alone
         s.refresh_from_db()
         self.assertTrue(s.logo.name.endswith(".png"))
+
+
+class HeaderMenuCountsTests(Base):
+    def test_counts_per_area_for_the_chosen_country(self):
+        a = self.make_ad(region="kathmandu", gender="female", categories=["massage", "clinic"])
+        a.approve()
+        b = self.make_ad(region="pokhara", gender="female")
+        b.approve()
+        self.make_ad(region="kathmandu", gender="female")  # draft: not counted
+        res = self.client.get("/api/ads/menu?country=NP")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["gender"]["female"], {"kathmandu": 1, "pokhara": 1})
+        self.assertEqual(res.data["category"]["clinic"], {"kathmandu": 1})
+        self.assertEqual(res.data["labels"]["kathmandu"], "Kathmandu")
+        self.assertEqual(self.client.get("/api/ads/menu?country=DK").data["gender"], {})  # other country
+        self.assertEqual(self.client.get("/api/ads/menu").data["gender"], {})
