@@ -663,6 +663,12 @@ class SiteSettings(models.Model):
     def save(self, *args, **kwargs):
         self.pk = 1  # singleton
         self.coin_value = max(1, self.coin_value or 100)
+        if self.logo and not getattr(self.logo, "_committed", True):
+            # A newly uploaded logo: cut off empty borders so it shows at full size in the header.
+            from .images import trim_logo
+            trimmed = trim_logo(self.logo.file)
+            if trimmed is not None:
+                self.logo.save(trimmed.name, trimmed, save=False)
         super().save(*args, **kwargs)
         # One currency for the whole site: plans and coin packages follow it.
         Product.objects.exclude(currency=self.currency).update(currency=self.currency)

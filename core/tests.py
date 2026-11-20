@@ -2332,3 +2332,30 @@ class AdminModerationTests(Base):
         plans = self.web.get("/admin/sales/").content.decode()
         self.assertNotIn("<th>Sold</th>", plans)
         self.assertNotIn("<th>Earned</th>", plans)
+
+
+class LogoTrimTests(APITestCase):
+    def test_uploaded_logo_loses_empty_borders(self):
+        from io import BytesIO
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+
+        from core.models import SiteSettings
+        img = Image.new("RGBA", (2000, 667), (0, 0, 0, 0))  # transparent canvas …
+        img.paste((233, 79, 194, 255), (100, 250, 1900, 420))  # … with the visible logo in the middle
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        s = SiteSettings.load()
+        s.logo = SimpleUploadedFile("logo.png", buf.getvalue(), content_type="image/png")
+        s.save()
+        s.refresh_from_db()
+        with s.logo.open("rb") as fh:
+            out = Image.open(fh)
+            out.load()
+        self.assertLessEqual(out.width, 1200)
+        self.assertGreater(out.width / out.height, 8)  # was 3:1 with the borders, now just the 1800×170 logo
+        s.site_name = "Again"
+        s.save()  # saving other settings leaves the logo alone
+        s.refresh_from_db()
+        self.assertTrue(s.logo.name.endswith(".png"))
