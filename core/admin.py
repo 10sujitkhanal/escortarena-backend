@@ -24,6 +24,7 @@ from .models import (
     Heart,
     IdVerification,
     LegacyAccount,
+    LoginEvent,
     Message,
     Offer,
     Order,
@@ -37,27 +38,85 @@ from .models import (
     UserReport,
 )
 
-admin.site.site_header = "Moderation & settings"
-admin.site.site_title = "Admin"
+
+class LoginEventInline(admin.TabularInline):
+    """Every sign-in of this user, newest first (no IP addresses are kept)."""
+
+    model = LoginEvent
+    extra = 0
+    max_num = 0
+    can_delete = False
+    fields = ["at", "method", "device", "country"]
+    readonly_fields = fields
+    ordering = ["-at"]
+    verbose_name_plural = "Login history"
 
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     ordering = ["-date_joined"]
-    list_display = ["email", "display_name", "is_advertiser", "vip_until", "age_verified", "phone_verified", "is_staff", "date_joined"]
-    list_filter = ["is_advertiser", "age_verified", "is_staff", "is_active"]
+    list_display = ["email", "display_name", "kind", "country", "ad_count", "age_verified", "date_joined", "last_login",
+                    "login_count"]
+    list_filter = ["is_advertiser", "age_verified", "is_staff", "is_active", "phone_country"]
     search_fields = ["email", "display_name", "phone"]
+    list_per_page = 50
+    date_hierarchy = "date_joined"
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Profile", {"fields": ("display_name", "phone", "phone_verified")}),
+        ("Profile", {"fields": ("display_name", "phone_country", "phone", "phone_verified")}),
         ("Visitor membership", {"fields": ("vip_until",), "description": "Free, or VIP until this time (messages, comments, reviews and videos)."}),
         ("Advertiser", {"fields": ("is_advertiser", "age_verified", "adult_confirmed_at")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
-        ("Dates", {"fields": ("last_login", "date_joined")}),
+        ("Dates", {"fields": ("date_joined", "last_login")}),
     )
     add_fieldsets = ((None, {"classes": ("wide",), "fields": ("email", "password1", "password2")}),)
     # "Verified" is set only by approving an ID verification (see ID verifications).
-    readonly_fields = ["age_verified"]
+    readonly_fields = ["age_verified", "last_login"]
+    inlines = [LoginEventInline]
+
+    def get_queryset(self, request):
+        from django.db.models import Count
+        return super().get_queryset(request).annotate(n_ads=Count("ads", distinct=True), n_logins=Count("logins", distinct=True))
+
+    @admin.display(description="Type", ordering="is_advertiser")
+    def kind(self, obj):
+        if obj.is_staff:
+            return "Staff"
+        return "Advertiser" if obj.is_advertiser else ("VIP visitor" if obj.is_vip else "Visitor")
+
+    @admin.display(description="Country", ordering="phone_country")
+    def country(self, obj):
+        return obj.phone_country
+
+    @admin.display(description="Ads", ordering="n_ads")
+    def ad_count(self, obj):
+        return obj.n_ads
+
+    @admin.display(description="Logins", ordering="n_logins")
+    def login_count(self, obj):
+        return obj.n_logins
+
+
+@admin.register(LoginEvent)
+class LoginEventAdmin(admin.ModelAdmin):
+    """Read-only list of every sign-in."""
+
+    list_display = ["at", "user", "is_advertiser", "method", "device", "country"]
+    list_filter = ["method", "user__is_advertiser", "country"]
+    search_fields = ["user__email", "user__display_name"]
+    date_hierarchy = "at"
+    list_select_related = ["user"]
+    list_per_page = 100
+
+    @admin.display(description="Advertiser", boolean=True, ordering="user__is_advertiser")
+    def is_advertiser(self, obj):
+        return obj.user.is_advertiser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 class AdPictureInline(admin.TabularInline):

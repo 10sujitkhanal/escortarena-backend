@@ -1,0 +1,198 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+{% comment %}Admin start page. Numbers and lists come from core/dashboard.py.{% endcomment %}
+
+{% block title %}Dashboard | {{ site_title }}{% endblock %}
+{% block bodyclass %}{{ block.super }} dashboard velora-dash{% endblock %}
+{% block breadcrumbs %}{% endblock %}
+{% block coltype %}colM{% endblock %}
+{% block content_title %}{% endblock %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+  .velora-dash #content { width: auto; max-width: 1480px; }  /* Django's dashboard.css fixes it at 600px */
+  .vd { --vd-accent: #e94fc2; --vd-radius: 14px; display: grid; gap: 22px; }
+  .vd h1 { margin: 0; font-size: 1.6rem; }
+  .vd-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .vd-muted { color: var(--body-quiet-color); }
+  .vd-card { background: var(--body-bg); border: 1px solid var(--hairline-color); border-radius: var(--vd-radius); padding: 16px 18px; min-width: 0; }
+  .vd-card h2 { margin: 0 0 12px; padding: 0; background: none; color: var(--body-fg); font-size: .95rem; font-weight: 700;
+                text-transform: none; letter-spacing: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .vd-card h2 a { font-size: .8rem; font-weight: 600; }
+  .vd-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+  .vd-stat { display: block; text-decoration: none !important; color: inherit !important; transition: border-color .15s, transform .15s; }
+  .vd-stat:hover { border-color: var(--vd-accent); transform: translateY(-1px); }
+  .vd-stat .n { font-size: 1.9rem; font-weight: 800; line-height: 1.1; margin: 4px 0 2px; color: var(--body-fg); }
+  .vd-stat .l { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--body-quiet-color); }
+  .vd-stat .s { font-size: .8rem; color: var(--body-quiet-color); }
+  .vd-grid { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+  .vd-wide { grid-column: 1 / -1; }
+  .vd-alerts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .vd-alert { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-radius: 12px;
+              border: 1px solid var(--hairline-color); text-decoration: none !important; color: var(--body-fg) !important; font-weight: 600; }
+  .vd-alert .c { min-width: 32px; padding: 3px 9px; border-radius: 999px; text-align: center; font-weight: 800; background: var(--darkened-bg); }
+  .vd-alert.on.hot { border-color: var(--vd-accent); background: color-mix(in srgb, var(--vd-accent) 10%, transparent); }
+  .vd-alert.on.hot .c { background: var(--vd-accent); color: #fff; }
+  .vd-alert.on.warn .c { background: #f5a524; color: #1d1300; }
+  .vd-alert.on.info .c { background: #3b82f6; color: #fff; }
+  .vd-alert:not(.on) { opacity: .65; }
+  .vd table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  .vd th { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--body-quiet-color);
+           background: none; padding: 6px 8px; border-bottom: 1px solid var(--hairline-color); white-space: nowrap; }
+  .vd td { padding: 8px; border-bottom: 1px solid var(--hairline-color); vertical-align: middle; }
+  .vd tr:last-child td { border-bottom: 0; }
+  .vd .scroll { overflow-x: auto; }
+  .vd .who b { display: block; font-weight: 600; }
+  .vd .who small { color: var(--body-quiet-color); }
+  .vd .nowrap { white-space: nowrap; }
+  .vd .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 700; background: var(--darkened-bg); white-space: nowrap; }
+  .vd .pill.ok { background: #16a34a22; color: #16a34a; }
+  .vd .pill.hot { background: color-mix(in srgb, var(--vd-accent) 15%, transparent); color: var(--vd-accent); }
+  .vd .pill.warn { background: #f5a52422; color: #b77400; }
+  .vd .pill.blue { background: #3b82f622; color: #3b82f6; }
+  .vd .empty { padding: 16px 0; text-align: center; color: var(--body-quiet-color); }
+  .vd-chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 8px; }
+  .vd-chart .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative; }
+  .vd-chart .bar { border-radius: 4px 4px 0 0; min-height: 0; }
+  .vd-chart .bar.a { background: var(--vd-accent); }
+  .vd-chart .bar.v { background: #8b5cf6; opacity: .75; }
+  .vd-chart .d { font-size: .65rem; color: var(--body-quiet-color); text-align: center; margin-top: 4px; }
+  .vd-legend { display: flex; gap: 14px; font-size: .78rem; color: var(--body-quiet-color); margin-top: 8px; }
+  .vd-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  @media (max-width: 767px) { .vd-grid { grid-template-columns: 1fr; } .vd-stat .n { font-size: 1.5rem; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vd">
+  <div class="vd-head">
+    <h1>Dashboard</h1>
+    <span class="vd-muted">{{ now|date:"l j F Y, H:i" }}</span>
+  </div>
+
+  {# Numbers #}
+  <div class="vd-stats">
+    {% for s in stats %}
+      <a class="vd-card vd-stat" href="{{ s.url }}">
+        <div class="l">{{ s.label }}</div>
+        <div class="n">{{ s.value }}</div>
+        <div class="s">{{ s.sub }}</div>
+      </a>
+    {% endfor %}
+  </div>
+
+  {# What needs attention #}
+  <div class="vd-card">
+    <h2>Needs attention</h2>
+    <div class="vd-alerts">
+      {% for a in alerts %}
+        <a class="vd-alert {{ a.tone }}{% if a.count %} on{% endif %}" href="{{ a.url }}">
+          <span>{{ a.label }}</span><span class="c">{{ a.count }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="vd-grid">
+    {# ID verification requests #}
+    <div class="vd-card">
+      <h2>Waiting for ID verification <a href="{% url 'admin:core_idverification_changelist' %}?status__exact=pending">All requests →</a></h2>
+      {% if verifications %}
+        <div class="scroll"><table>
+          <thead><tr><th>Advertiser</th><th>Document</th><th>Country</th><th>Sent</th><th></th></tr></thead>
+          <tbody>
+          {% for v in verifications %}
+            <tr>
+              <td class="who"><b><a href="{{ v.user_url }}">{{ v.name }}</a></b><small>{{ v.email }}</small></td>
+              <td>{{ v.type }}</td>
+              <td class="nowrap">{% if v.country %}{{ v.country.flag }} {{ v.country.name }}{% else %}–{% endif %}</td>
+              <td class="nowrap" title="{{ v.at|date:'j M Y H:i' }}">{{ v.at|timesince }} ago</td>
+              <td><a class="pill hot" href="{{ v.url }}">Review</a></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}
+        <div class="empty">No one is waiting – all ID checks are done. ✓</div>
+      {% endif %}
+    </div>
+
+    {# Sign-ups chart #}
+    <div class="vd-card">
+      <h2>Sign-ups, last 14 days <span class="vd-muted">{{ chart_total }} in total</span></h2>
+      <div class="vd-chart">
+        {% for d in chart %}
+          <div class="col" title="{{ d.day|date:'D j M' }}: {{ d.advertisers }} advertisers, {{ d.visitors }} visitors">
+            <div class="bar a" style="height: {{ d.h_a }}%"></div>
+            <div class="bar v" style="height: {{ d.h_v }}%"></div>
+            <div class="d">{{ d.day|date:"j/n" }}</div>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="vd-legend"><span><i style="background:#e94fc2"></i>Advertisers</span><span><i style="background:#8b5cf6"></i>Visitors</span></div>
+    </div>
+
+    {# Creators with ads, by last sign-in #}
+    <div class="vd-card vd-wide">
+      <h2>Creators with ads – last signed in <a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1&o=-last_login">All advertisers →</a></h2>
+      {% include "admin/_dash_users.html" with rows=creators show_ads=True %}
+    </div>
+
+    {# Latest ads #}
+    <div class="vd-card vd-wide">
+      <h2>Latest 10 ads <a href="{% url 'admin:core_ad_changelist' %}">All ads →</a></h2>
+      {% if latest_ads %}
+        <div class="scroll"><table>
+          <thead><tr><th>Ad</th><th>Advertiser</th><th>Country</th><th>Status</th><th>Plan</th><th>Photos</th><th>Created</th></tr></thead>
+          <tbody>
+          {% for a in latest_ads %}
+            <tr>
+              <td><a href="{{ a.url }}"><b>{{ a.title|truncatechars:48 }}</b></a></td>
+              <td><a href="{{ a.owner_url }}">{{ a.owner|truncatechars:28 }}</a></td>
+              <td class="nowrap">{% if a.country %}{{ a.country.flag }} {{ a.country.name }}{% else %}–{% endif %}</td>
+              <td><span class="pill {% if a.live %}ok{% elif a.status_key == 'pending' %}warn{% elif a.status_key == 'rejected' %}hot{% endif %}">{% if a.live %}Live{% else %}{{ a.status }}{% endif %}</span></td>
+              <td><span class="pill {% if a.tier != 'free' %}hot{% endif %}">{{ a.tier|capfirst }}</span></td>
+              <td>{{ a.pictures }}</td>
+              <td class="nowrap" title="{{ a.created|date:'j M Y H:i' }}">{{ a.created|date:"j M Y, H:i" }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="empty">No ads yet.</div>{% endif %}
+    </div>
+
+    <div class="vd-card">
+      <h2>Latest 10 users <a href="{% url 'admin:core_user_changelist' %}">All users →</a></h2>
+      {% include "admin/_dash_users.html" with rows=latest_users show_role=True %}
+    </div>
+
+    <div class="vd-card">
+      <h2>Latest 10 advertisers <a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1">All advertisers →</a></h2>
+      {% include "admin/_dash_users.html" with rows=latest_advertisers show_ads=True %}
+    </div>
+
+    {# Recent sign-ins #}
+    <div class="vd-card vd-wide">
+      <h2>Recent sign-ins <a href="{% url 'admin:core_loginevent_changelist' %}">Login history →</a></h2>
+      {% if logins %}
+        <div class="scroll"><table>
+          <thead><tr><th>Who</th><th>When</th><th>How</th><th>Device</th><th>Country</th></tr></thead>
+          <tbody>
+          {% for e in logins %}
+            <tr>
+              <td><a href="{{ e.url }}"><b>{{ e.user|truncatechars:36 }}</b></a> {% if e.advertiser %}<span class="pill hot">Advertiser</span>{% endif %}</td>
+              <td class="nowrap" title="{{ e.at|date:'j M Y H:i:s' }}">{{ e.at|date:"j M, H:i" }} <span class="vd-muted">({{ e.at|timesince }} ago)</span></td>
+              <td>{{ e.method }}</td>
+              <td>{{ e.device|default:"–" }}</td>
+              <td class="nowrap">{% if e.country %}{{ e.country.flag }} {{ e.country.name }}{% else %}–{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="empty">No sign-ins recorded yet – they appear here from now on.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block sidebar %}{% endblock %}

@@ -1199,6 +1199,7 @@ class IdVerification(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        verbose_name = "ID verification"
 
     def __str__(self):
         return f"{self.user} – {self.get_status_display()}"
@@ -1440,3 +1441,29 @@ class LegacyAccount(models.Model):
 
     def __str__(self):
         return f"{self.legacy_username} (#{self.legacy_id})"
+
+
+class LoginEvent(models.Model):
+    """One sign-in. Shown in the admin (dashboard, user page). No IP address is kept – only the country Cloudflare
+    reports for the visitor (CF-IPCountry) and a short device description."""
+
+    class Method(models.TextChoices):
+        PASSWORD = "password", "Password"
+        SIGNUP = "signup", "Sign-up"
+        CLAIM = "claim", "Moved from escortside.dk"
+        RESET = "reset", "Password reset"
+        ADMIN = "admin", "Admin login"
+        OTHER = "other", "Other"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="logins")
+    at = models.DateTimeField(auto_now_add=True, db_index=True)
+    method = models.CharField(max_length=10, choices=Method.choices, default=Method.OTHER)
+    country = models.CharField(max_length=2, blank=True, help_text="Country of the connection (from Cloudflare)")
+    device = models.CharField(max_length=60, blank=True, help_text="Browser and system, e.g. 'Chrome · Android'")
+
+    class Meta:
+        ordering = ["-at"]
+        verbose_name = "login"
+
+    def __str__(self):
+        return f"{self.user} – {self.at:%Y-%m-%d %H:%M}"

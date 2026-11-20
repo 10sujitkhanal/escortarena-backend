@@ -54,7 +54,7 @@ FREE_AD_DAYS = int(os.environ.get("FREE_AD_DAYS", "30"))
 
 INSTALLED_APPS = [
     "daphne",  # makes `runserver` serve ASGI (HTTP + WebSockets)
-    "django.contrib.admin",
+    "core.admin_site.VeloraAdminConfig",  # Django admin with our dashboard and short sidebar
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",

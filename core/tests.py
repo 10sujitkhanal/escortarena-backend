@@ -2075,3 +2075,45 @@ class EscortsideImportTests(Base):
         acc.refresh_from_db()
         self.assertIsNotNone(acc.invited_at)
         self.assertEqual(django_mail.outbox[-1].to, ["anna@old.dk"])
+
+
+class AdminDashboardTests(Base):
+    def test_login_is_recorded_with_country_and_device(self):
+        from core.models import LoginEvent
+
+        res = self.client.post("/api/auth/login", {"email": "adv@test.dk", "password": "pw-Strong-123"}, format="json",
+                               HTTP_CF_IPCOUNTRY="dk", HTTP_USER_AGENT="Mozilla/5.0 (Linux; Android 16) Chrome/157.0 Mobile")
+        self.assertEqual(res.status_code, 200)
+        e = LoginEvent.objects.get(user=self.adv)
+        self.assertEqual((e.method, e.country, e.device), ("password", "DK", "Chrome · Android"))
+        self.adv.refresh_from_db()
+        self.assertIsNotNone(self.adv.last_login)
+
+    def test_dashboard_lists_and_sidebar(self):
+        from django.test import Client
+
+        from core.models import IdVerification, LoginEvent
+
+        ad = self.make_ad(title="Dash ad")
+        ad.approve()
+        IdVerification.objects.create(user=self.adv, document_type="passport", full_name="Anna Test",
+                                      date_of_birth="1995-01-01")
+        LoginEvent.objects.create(user=self.adv, method="password", country="DK", device="Chrome · Android")
+        staff = User.objects.create_superuser("boss@test.dk", "pw-Strong-123")
+        web = Client()
+        web.force_login(staff)
+        res = web.get("/admin/")
+        self.assertEqual(res.status_code, 200)
+        html = res.content.decode()
+        for text in ("Waiting for ID verification", "Anna Test", "Dash ad", "Creators with ads", "Latest 10 users",
+                     "Latest 10 advertisers", "Recent sign-ins", "Chrome · Android"):
+            self.assertIn(text, html)
+        sections = [a["name"] for a in res.context["available_apps"]]
+        self.assertEqual(sections, ["Moderation", "People", "Sales", "Content", "Site setup"])
+        menu = [m["object_name"] for a in res.context["available_apps"] for m in a["models"]]
+        self.assertNotIn("Heart", menu)
+        self.assertNotIn("Conversation", menu)
+        id_entry = next(m for a in res.context["available_apps"] for m in a["models"] if m["object_name"] == "IdVerification")
+        self.assertIn("(1)", id_entry["name"])  # waiting requests counted in the menu
+        for url in ("/admin/core/user/", f"/admin/core/user/{self.adv.pk}/change/", "/admin/core/loginevent/"):
+            self.assertEqual(web.get(url).status_code, 200, url)
