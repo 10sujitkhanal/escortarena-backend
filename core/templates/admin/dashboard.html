@@ -43,7 +43,7 @@
     </div>
   </div>
 
-  {# Right after Quick access, two per row: latest logins, latest ads, creators with ads, latest users #}
+  {# Right after Quick access, two per row: logins, ads, creators, advertisers, users, VIP members #}
   <div class="ea-grid">
     {# Latest logins #}
     <div class="ea-card">
@@ -91,10 +91,36 @@
       {% include "admin/_dash_users.html" with rows=creators show_ads=True compact=True %}
     </div>
 
+    {# Latest advertisers #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-star"/></svg>Latest advertisers</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1">All advertisers →</a></h2>
+      {% include "admin/_dash_users.html" with rows=latest_advertisers show_ads=True compact=True %}
+    </div>
+
+    {# Latest users #}
     <div class="ea-card">
       <h2><span><svg class="ic"><use href="#i-users"/></svg>Latest users</span><a href="{% url 'admin:core_user_changelist' %}">All users →</a></h2>
       {% include "admin/_dash_users.html" with rows=latest_users show_role=True compact=True %}
     </div>
+    {# VIP members #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-gift"/></svg>VIP members (visitors)</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=0">All visitors →</a></h2>
+      {% if vip_members %}
+        <div class="ea-scroll"><table class="ea-table">
+          <thead><tr><th>Who</th><th>Plan</th><th>VIP until</th></tr></thead>
+          <tbody>
+          {% for v in vip_members %}
+            <tr>
+              <td class="ea-who"><b><a href="{{ v.url }}">{{ v.name|truncatechars:26 }}</a></b><small>{% if v.country %}{{ v.country.flag }} {{ v.country.name }} · {% endif %}{{ v.email|truncatechars:28 }}</small></td>
+              <td>{{ v.plan|truncatechars:28 }}{% if v.since %}<br><small class="ea-muted">bought {{ v.since|date:"j M Y" }}</small>{% endif %}</td>
+              <td class="ea-nowrap">{{ v.until|date:"j M Y" }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="ea-empty">No VIP members right now.</div>{% endif %}
+    </div>
+
   </div>
 
   {# Key numbers #}
@@ -245,25 +271,6 @@
       {% else %}<div class="ea-empty">No payments yet.</div>{% endif %}
     </div>
 
-    {# VIP members #}
-    <div class="ea-card">
-      <h2><span><svg class="ic"><use href="#i-gift"/></svg>VIP members (visitors)</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=0">All visitors →</a></h2>
-      {% if vip_members %}
-        <div class="ea-scroll"><table class="ea-table">
-          <thead><tr><th>Who</th><th>Plan</th><th>VIP until</th></tr></thead>
-          <tbody>
-          {% for v in vip_members %}
-            <tr>
-              <td class="ea-who"><b><a href="{{ v.url }}">{{ v.name|truncatechars:26 }}</a></b><small>{% if v.country %}{{ v.country.flag }} {{ v.country.name }} · {% endif %}{{ v.email|truncatechars:28 }}</small></td>
-              <td>{{ v.plan|truncatechars:28 }}{% if v.since %}<br><small class="ea-muted">bought {{ v.since|date:"j M Y" }}</small>{% endif %}</td>
-              <td class="ea-nowrap">{{ v.until|date:"j M Y" }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table></div>
-      {% else %}<div class="ea-empty">No VIP members right now.</div>{% endif %}
-    </div>
-
     {# Latest reviews #}
     <div class="ea-card">
       <h2><span><svg class="ic"><use href="#i-star"/></svg>Latest reviews</span><a href="{% url 'admin:core_adreview_changelist' %}">All reviews →</a></h2>
@@ -345,10 +352,6 @@
       {% else %}<div class="ea-empty">No paid plans end this week.</div>{% endif %}
     </div>
 
-    <div class="ea-card ea-wide">
-      <h2><span><svg class="ic"><use href="#i-star"/></svg>Latest advertisers</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1">All advertisers →</a></h2>
-      {% include "admin/_dash_users.html" with rows=latest_advertisers show_ads=True %}
-    </div>
 
   </div>
 </div>
