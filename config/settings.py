@@ -83,7 +83,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "core" / "templates"],  # our admin look (base_site, nav_sidebar) wins over Django's
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [

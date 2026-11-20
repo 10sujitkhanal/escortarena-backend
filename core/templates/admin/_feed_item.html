@@ -1,0 +1,8 @@
+{% load ea_admin %}{% comment %}One activity item (bell and dashboard). e: from core/admin_feed.py.{% endcomment %}
+<li class="{% if e.new %}new{% endif %}">
+  <a href="{{ e.url }}">
+    <span class="ico t-{{ e.tone }}"><svg class="ic"><use href="#i-{{ e.icon }}"/></svg></span>
+    <span class="txt"><b>{{ e.title }}</b><small>{{ e.label }}{% if e.detail %} · {{ e.detail }}{% endif %}</small></span>
+    <span class="when" title="{{ e.at|date:'j M Y H:i' }}">{{ e.at|ago }}</span>
+  </a>
+</li>

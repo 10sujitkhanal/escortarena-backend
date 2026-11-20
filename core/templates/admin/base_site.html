@@ -1,0 +1,47 @@
+{% extends "admin/base.html" %}
+{% load static %}
+{% comment %}EscortArea admin look: theme, header with notification bell, icon set. Sidebar: nav_sidebar.html.{% endcomment %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:"EscortArea admin" }}{% endblock %}
+
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static 'velora_admin/theme.css' %}">{% endblock %}
+
+{% block branding %}
+{% include "admin/_icons.html" %}
+<div id="site-name"><a href="{% url 'admin:index' %}"><span class="ea-logo">E</span>{{ site_header|default:"EscortArea" }} <span class="ea-tag">Admin</span></a></div>
+{% if user.is_anonymous %}{% include "admin/color_theme_toggle.html" %}{% endif %}
+{% endblock %}
+
+{% block welcome-msg %}{% endblock %}
+
+{% block userlinks %}
+  <details class="ea-bell">
+    <summary aria-label="Notifications{% if notif_new %} – {{ notif_new }} new{% endif %}" title="Notifications">
+      <svg class="ic"><use href="#i-bell"/></svg>
+      {% if notif_new %}<span class="dot">{{ notif_new }}</span>{% endif %}
+    </summary>
+    <div class="panel">
+      <header>
+        <span>Notifications{% if notif_new %} · {{ notif_new }} new{% endif %}</span>
+        {% if notif_new %}
+          <form method="post" action="{% url 'admin:notifications_seen' %}">{% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit">Mark all as read</button>
+          </form>
+        {% endif %}
+      </header>
+      <ul class="ea-feed">
+        {% for e in notif_items %}{% include "admin/_feed_item.html" %}{% empty %}
+          <li class="ea-empty">Nothing new in the last 14 days.</li>
+        {% endfor %}
+      </ul>
+      <footer><a href="{% url 'admin:index' %}#activity">See all activity on the dashboard</a></footer>
+    </div>
+  </details>
+  {% if site_url %}<a href="{{ site_url }}" target="_blank" rel="noopener">View site ↗</a>{% endif %}
+  {% if user.has_usable_password %}<a href="{% url 'admin:password_change' %}">Password</a>{% endif %}
+  <form id="logout-form" method="post" action="{% url 'admin:logout' %}">{% csrf_token %}<button type="submit">Log out</button></form>
+  {% include "admin/color_theme_toggle.html" %}
+  <span class="ea-user" title="{{ user.get_username }}"><span class="ea-avatar">{{ user.get_username|slice:":1" }}</span><span>{% firstof user.get_short_name user.get_username %}</span></span>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}

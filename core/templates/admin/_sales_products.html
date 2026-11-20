@@ -1,0 +1,15 @@
+{% comment %}Price list rows on the sales overview. rows: product rows from core/dashboard.py.{% endcomment %}
+{% if rows %}
+  <div class="ea-scroll"><table class="ea-table">
+    <thead><tr><th>Name</th>{% if show_coins %}<th>Coins</th>{% else %}<th>Period</th>{% endif %}<th>Price</th><th>Sold</th><th>30 d</th><th>Earned</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="{% if not r.active %}ea-off{% endif %}">
+        <td><a href="{{ r.url }}"><b>{{ r.name|truncatechars:34 }}</b></a>{% if not r.active %} <span class="ea-pill t-grey">Off</span>{% endif %}</td>
+        <td>{% if show_coins %}{{ r.coins }}{% else %}{{ r.days|default:"–" }}{% endif %}</td>
+        <td class="ea-price">{{ r.price }}</td><td>{{ r.sold }}</td><td>{{ r.sold_30d }}</td><td class="ea-nowrap">{{ r.earned }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+{% else %}<div class="ea-empty">{{ empty }}</div>{% endif %}

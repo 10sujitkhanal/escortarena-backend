@@ -1,0 +1,45 @@
+{% comment %}EscortArea admin sidebar: sections with icons and "waiting" badges (built in core/admin_site.py).
+The ids toggle-nav-sidebar / nav-sidebar / nav-filter are kept so Django's open/close script keeps working.{% endcomment %}
+<button class="sticky toggle-nav-sidebar" id="toggle-nav-sidebar" aria-label="Toggle navigation"></button>
+<nav class="sticky" id="nav-sidebar" aria-label="Sidebar">
+  <div class="ea-filter">
+    <svg class="ic"><use href="#i-search"/></svg>
+    <input type="search" id="nav-filter" placeholder="Find a page…" aria-label="Filter the menu">
+  </div>
+  {% for section in nav_sections %}
+    <div class="ea-nav-section">
+      {% if section.title %}<div class="ea-nav-title"><svg class="ic"><use href="#i-{{ section.icon }}"/></svg>{{ section.title }}</div>{% endif %}
+      <ul class="ea-nav">
+        {% for item in section.items %}
+          <li data-name="{{ item.name|lower }}">
+            <a href="{{ item.url }}" class="{% if item.active %}active{% endif %}"{% if item.active %} aria-current="page"{% endif %}>
+              <svg class="ic"><use href="#i-{{ item.icon }}"/></svg>{{ item.name }}
+              {% if item.badge %}<span class="badge" title="{{ item.badge }} waiting">{{ item.badge }}</span>{% endif %}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endfor %}
+</nav>
+<script>
+  (function () {
+    var box = document.getElementById("nav-filter");
+    if (!box) return;
+    function run() {
+      var q = box.value.trim().toLowerCase();
+      document.querySelectorAll("#nav-sidebar .ea-nav-section").forEach(function (sec) {
+        var any = false;
+        sec.querySelectorAll("li[data-name]").forEach(function (li) {
+          var hit = !q || li.dataset.name.indexOf(q) !== -1;
+          li.style.display = hit ? "" : "none";
+          any = any || hit;
+        });
+        sec.style.display = any ? "" : "none";
+      });
+    }
+    box.addEventListener("input", run);
+    box.addEventListener("keyup", function (e) { if (e.key === "Escape") { box.value = ""; run(); } });
+    setTimeout(run, 0);
+  })();
+</script>

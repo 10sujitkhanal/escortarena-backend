@@ -2109,11 +2109,45 @@ class AdminDashboardTests(Base):
                      "Latest 10 advertisers", "Recent sign-ins", "Chrome · Android"):
             self.assertIn(text, html)
         sections = [a["name"] for a in res.context["available_apps"]]
-        self.assertEqual(sections, ["Moderation", "People", "Sales", "Content", "Site setup"])
+        self.assertEqual(sections, ["Moderation", "People", "Chat", "Sales", "Content", "Site setup"])
         menu = [m["object_name"] for a in res.context["available_apps"] for m in a["models"]]
         self.assertNotIn("Heart", menu)
-        self.assertNotIn("Conversation", menu)
+        self.assertIn("Conversation", menu)  # chat has its own section
         id_entry = next(m for a in res.context["available_apps"] for m in a["models"] if m["object_name"] == "IdVerification")
         self.assertIn("(1)", id_entry["name"])  # waiting requests counted in the menu
-        for url in ("/admin/core/user/", f"/admin/core/user/{self.adv.pk}/change/", "/admin/core/loginevent/"):
+        for url in ("/admin/core/user/", f"/admin/core/user/{self.adv.pk}/change/", "/admin/core/loginevent/",
+                    "/admin/sales/", "/admin/core/idverification/", "/admin/core/idverification/?history=again"):
             self.assertEqual(web.get(url).status_code, 200, url)
+
+    def test_notifications_and_resubmitted_verification(self):
+        from django.test import Client
+
+        from core.admin_feed import events, verification_history
+        from core.models import IdVerification
+
+        first = IdVerification.objects.create(user=self.adv, document_type="passport", full_name="Anna Test",
+                                              date_of_birth="1995-01-01")
+        self.assertEqual(verification_history(first)["key"], "id_first")
+        first.decide(False, reason="Blurry")
+        again = IdVerification.objects.create(user=self.adv, document_type="passport", full_name="Anna Test",
+                                              date_of_birth="1995-01-01")
+        h = verification_history(again)
+        self.assertEqual((h["key"], h["rejected"]), ("id_again", 1))
+        newbie = User.objects.create_user("new@test.dk", "pw-Strong-123")
+        kinds = {e["kind"] for e in events()}
+        self.assertTrue({"id_again", "user", "advertiser"} <= kinds, kinds)
+
+        staff = User.objects.create_superuser("boss@test.dk", "pw-Strong-123")
+        web = Client()
+        web.force_login(staff)
+        page = web.get("/admin/core/user/")
+        self.assertGreater(page.context["notif_new"], 0)  # bell on every admin page
+        self.assertContains(page, newbie.email)
+        web.post("/admin/notifications/seen/", {"next": "/admin/"})
+        self.assertEqual(web.get("/admin/").context["notif_new"], 0)
+        dash = web.get("/admin/")
+        self.assertContains(dash, "Sent again – rejected once before")
+        self.assertContains(dash, "Quick access")
+        sales = web.get("/admin/sales/")
+        self.assertContains(sales, "Plans for ads")
+        self.assertContains(sales, "Coin packages")

@@ -468,19 +468,60 @@ class AdReviewAdmin(admin.ModelAdmin):
 # ---------------------------------------------------------------------------
 
 
+class ResubmittedFilter(admin.SimpleListFilter):
+    """ID requests from people who were rejected before (and sent new documents)."""
+
+    title = "history"
+    parameter_name = "history"
+
+    def lookups(self, request, model_admin):
+        return [("again", "Sent again after rejection"), ("first", "First request")]
+
+    def queryset(self, request, queryset):
+        from django.db.models import Exists, OuterRef
+        earlier_rejected = IdVerification.objects.filter(user_id=OuterRef("user_id"), created_at__lt=OuterRef("created_at"),
+                                                         status=IdVerification.Status.REJECTED)
+        earlier_any = IdVerification.objects.filter(user_id=OuterRef("user_id"), created_at__lt=OuterRef("created_at"))
+        if self.value() == "again":
+            return queryset.filter(Exists(earlier_rejected))
+        if self.value() == "first":
+            return queryset.exclude(Exists(earlier_any))
+        return queryset
+
+
 @admin.register(IdVerification)
 class IdVerificationAdmin(admin.ModelAdmin):
-    list_display = ["user", "full_name", "document_type", "age", "status", "created_at", "reviewed_at"]
-    list_filter = ["status", "document_type"]
+    list_display = ["user", "full_name", "document_type", "age", "status", "history", "created_at", "reviewed_at"]
+    list_filter = ["status", "document_type", ResubmittedFilter]
     search_fields = ["user__email", "user__display_name", "full_name"]
     list_select_related = ["user"]
-    fields = ["user", "document_type", "full_name", "date_of_birth", "age", "pictures", "status", "reject_reason",
-              "created_at", "reviewed_at", "reviewed_by"]
-    readonly_fields = ["user", "document_type", "full_name", "date_of_birth", "age", "pictures", "created_at", "reviewed_at", "reviewed_by"]
+    fields = ["user", "document_type", "full_name", "date_of_birth", "age", "history", "earlier_requests", "pictures",
+              "status", "reject_reason", "created_at", "reviewed_at", "reviewed_by"]
+    readonly_fields = ["user", "document_type", "full_name", "date_of_birth", "age", "history", "earlier_requests", "pictures",
+                       "created_at", "reviewed_at", "reviewed_by"]
     actions = ["approve", "reject"]
 
     def has_add_permission(self, request):
         return False
+
+    @admin.display(description="History")
+    def history(self, obj):
+        from .admin_feed import verification_history
+        h = verification_history(obj)
+        colours = {"pink": "#e94fc2", "amber": "#d48806", "blue": "#3b82f6"}
+        return format_html('<span style="font-weight:700;color:{}">{}</span>', colours[h["tone"]], h["label"])
+
+    @admin.display(description="Earlier requests")
+    def earlier_requests(self, obj):
+        from django.urls import reverse
+        from django.utils.html import format_html_join
+        rows = IdVerification.objects.filter(user_id=obj.user_id).exclude(pk=obj.pk).order_by("-created_at")
+        if not rows:
+            return "None – this is the first request."
+        return format_html_join(
+            "", '<div><a href="{}">{}</a> – {}{}</div>',
+            ((reverse("admin:core_idverification_change", args=[r.pk]), r.created_at.strftime("%d %b %Y %H:%M"),
+              r.get_status_display(), f" ({r.reject_reason})" if r.reject_reason else "") for r in rows))
 
     @admin.display(description="Age")
     def age(self, obj):
