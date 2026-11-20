@@ -3,9 +3,9 @@
    The light colours are also set on html[data-theme="light"] because Django's own light rule uses that selector. */
 
 :root, html[data-theme="light"] {
-  --ea-pink: #e94fc2;
-  --ea-pink-2: #c93aa6;
-  --ea-violet: #8b5cf6;
+  --ea-pink: #f0059d;
+  --ea-pink-2: #c8006a;
+  --ea-violet: #c8006a;
   --ea-green: #16a34a;
   --ea-amber: #d48806;
   --ea-red: #e5484d;
@@ -16,8 +16,8 @@
   --ea-soft: #f6f1f7;
 
   --primary: #2a1530;
-  --secondary: #e94fc2;
-  --accent: #e94fc2;
+  --secondary: #f0059d;
+  --accent: #f0059d;
   --primary-fg: #fff;
   --body-fg: #241a28;
   --body-bg: #fbf8fc;
@@ -29,23 +29,23 @@
   --header-bg: #1d0f1f;
   --header-link-color: #f4e9f4;
   --breadcrumbs-fg: #7b6f80;
-  --breadcrumbs-link-fg: #b0279a;
+  --breadcrumbs-link-fg: #b8007a;
   --breadcrumbs-bg: transparent;
-  --link-fg: #b0279a;
+  --link-fg: #b8007a;
   --link-hover-color: #7d1a6d;
-  --link-selected-fg: #e94fc2;
+  --link-selected-fg: #f0059d;
   --hairline-color: #eee5f0;
   --border-color: #e2d6e5;
   --darkened-bg: #f3edf5;
   --selected-bg: #f7e3f2;
   --selected-row: #fdf0f9;
   --button-fg: #fff;
-  --button-bg: #e94fc2;
-  --button-hover-bg: #c93aa6;
+  --button-bg: #f0059d;
+  --button-hover-bg: #c8006a;
   --default-button-bg: #7c2d6b;
   --default-button-hover-bg: #5f1f52;
   --object-tools-bg: #2a1530;
-  --object-tools-hover-bg: #e94fc2;
+  --object-tools-hover-bg: #f0059d;
   --message-success-bg: #e5f8ec;
   --message-warning-bg: #fff4dc;
   --message-error-bg: #ffe9ea;
@@ -64,9 +64,9 @@
     --body-loud-color: #fff;
     --header-bg: #0d070f;
     --breadcrumbs-fg: #a596ab;
-    --breadcrumbs-link-fg: #f08ad8;
-    --link-fg: #f08ad8;
-    --link-hover-color: #ffb3ea;
+    --breadcrumbs-link-fg: #ff5cc0;
+    --link-fg: #ff5cc0;
+    --link-hover-color: #ff9fd8;
     --hairline-color: #2a1d30;
     --border-color: #3a2a40;
     --darkened-bg: #1f1525;
@@ -88,9 +88,9 @@ html[data-theme="dark"] {
   --body-loud-color: #fff;
   --header-bg: #0d070f;
   --breadcrumbs-fg: #a596ab;
-  --breadcrumbs-link-fg: #f08ad8;
-  --link-fg: #f08ad8;
-  --link-hover-color: #ffb3ea;
+  --breadcrumbs-link-fg: #ff5cc0;
+  --link-fg: #ff5cc0;
+  --link-hover-color: #ff9fd8;
   --hairline-color: #2a1d30;
   --border-color: #3a2a40;
   --darkened-bg: #1f1525;
@@ -110,7 +110,7 @@ body { background: var(--body-bg); }
 #site-name { margin: 0; font-size: 1.15rem; font-weight: 800; letter-spacing: -.01em; }
 #site-name a { display: inline-flex; align-items: center; gap: 10px; color: #fff !important; }
 .ea-logo { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-weight: 900; color: #fff;
-           background: linear-gradient(135deg, var(--ea-pink), var(--ea-violet)); box-shadow: 0 4px 14px #e94fc255; }
+           background: linear-gradient(135deg, var(--ea-pink), var(--ea-violet)); box-shadow: 0 4px 14px #f0059d55; }
 .ea-tag { font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
           background: #ffffff14; color: #f4c6ea; }
 #user-tools { display: flex; align-items: center; gap: 14px; font-size: .8rem; text-transform: none; letter-spacing: 0; }
@@ -174,7 +174,7 @@ body { background: var(--body-bg); }
                               color: var(--body-quiet-color); }
 #nav-sidebar #nav-filter { width: 100%; box-sizing: border-box; margin: 0; padding: 9px 10px 9px 34px; border-radius: 10px;
                            border: 1px solid var(--border-color); background: var(--body-bg); color: var(--body-fg); font-size: .85rem; }
-#nav-sidebar #nav-filter:focus { outline: none; border-color: var(--ea-pink); box-shadow: 0 0 0 3px #e94fc233; }
+#nav-sidebar #nav-filter:focus { outline: none; border-color: var(--ea-pink); box-shadow: 0 0 0 3px #f0059d33; }
 .ea-nav-section { margin: 0 0 14px; }
 .ea-nav-title { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; font-size: .68rem; font-weight: 800;
                 letter-spacing: .09em; text-transform: uppercase; color: var(--body-quiet-color); }
@@ -208,7 +208,7 @@ div.breadcrumbs { padding: 12px 40px 0; font-size: .8rem; }
 .submit-row { border-radius: var(--ea-radius); background: var(--ea-soft); border: 1px solid var(--hairline-color); }
 input[type=text], input[type=email], input[type=number], input[type=password], input[type=url], input[type=search], textarea, select,
 .vTextField { border-radius: 9px; border-color: var(--border-color); }
-input:focus, textarea:focus, select:focus { border-color: var(--ea-pink) !important; outline: none; box-shadow: 0 0 0 3px #e94fc226; }
+input:focus, textarea:focus, select:focus { border-color: var(--ea-pink) !important; outline: none; box-shadow: 0 0 0 3px #f0059d26; }
 ul.messagelist li { border-radius: 12px; margin: 0 0 8px; }
 
 /* --- Shared building blocks (dashboard, sales) ------------------------------------------------------- */
@@ -228,7 +228,7 @@ ul.messagelist li { border-radius: 12px; margin: 0 0 8px; }
 .ea-kpis { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); }
 .ea-kpi { position: relative; display: block; overflow: hidden; text-decoration: none !important; color: var(--body-fg) !important;
           transition: transform .15s, border-color .15s, box-shadow .15s; }
-.ea-kpi:hover { transform: translateY(-2px); border-color: var(--ea-pink); box-shadow: 0 10px 30px #e94fc21f; }
+.ea-kpi:hover { transform: translateY(-2px); border-color: var(--ea-pink); box-shadow: 0 10px 30px #f0059d1f; }
 .ea-kpi .ico { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; margin-bottom: 10px; }
 .ea-kpi .l { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--body-quiet-color); }
 .ea-kpi .n { font-size: 1.85rem; font-weight: 800; line-height: 1.15; margin: 2px 0; letter-spacing: -.02em; }
