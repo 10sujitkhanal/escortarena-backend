@@ -18,8 +18,9 @@ SECTIONS = [
                               ("Comment", "comment"), ("AdReview", "star"), ("ContactMessage", "mail")]),
     ("People", "users", [("User", "user"), ("LoginEvent", "login"), ("LegacyAccount", "move")]),
     ("Chat", "chat", [("Conversation", "chat")]),
-    # "@plans" is the Plans page (ad plans, VIP plan, coin packages, add-ons – one tab each), not a model.
-    ("Sales", "money", [("Order", "receipt"), ("Offer", "gift"), ("@plans", "layers"), ("DiamondTransaction", "coin")]),
+    # "@sales" = Sales dashboard (charts, any period); "@plans" = Plans page (one tab per price list). Not models.
+    ("Sales", "money", [("@sales", "chart"), ("Order", "receipt"), ("Offer", "gift"), ("@plans", "layers"),
+                        ("DiamondTransaction", "coin")]),
     ("Content", "book", [("Topic", "book"), ("FaqItem", "help"), ("Tag", "tag")]),
     ("Site setup", "gear", [("SiteSettings", "gear"), ("Country", "globe"), ("AdRegion", "map"), ("AdPlace", "pin"),
                             ("AdCategory", "grid"), ("ChoiceOption", "list")]),
@@ -35,6 +36,8 @@ class VeloraAdminSite(AdminSite):
     def get_urls(self):
         return [
             path("sales/", self.admin_view(self.sales_view), name="sales"),
+            path("sales-dashboard/", self.admin_view(self.sales_dashboard_view), name="sales_dashboard"),
+            path("sales-dashboard/export.csv", self.admin_view(self.sales_export), name="sales_export"),
             path("notifications/seen/", self.admin_view(self.notifications_seen), name="notifications_seen"),
             *super().get_urls(),
         ]
@@ -73,6 +76,15 @@ class VeloraAdminSite(AdminSite):
                  "url": f"?tab={key}"} for key, label, icon in self.PLAN_TABS]
         ctx = {**self.each_context(request), **data, "title": "Plans", "tab": tab, "plan_tabs": tabs}
         return TemplateResponse(request, "admin/sales_overview.html", ctx)
+
+    def sales_dashboard_view(self, request):
+        from . import sales_dashboard
+        ctx = {**self.each_context(request), **sales_dashboard.build(request.GET), "title": "Sales dashboard"}
+        return TemplateResponse(request, "admin/sales_dashboard.html", ctx)
+
+    def sales_export(self, request):
+        from . import sales_dashboard
+        return sales_dashboard.export_csv(request.GET)
 
     def notifications_seen(self, request):
         """POST: mark every notification as read, then go back."""
@@ -119,6 +131,11 @@ class VeloraAdminSite(AdminSite):
         for title, icon, names in SECTIONS:
             items = []
             for name, item_icon in names:
+                if name == "@sales":
+                    url = reverse("admin:sales_dashboard")
+                    items.append({"name": "Sales dashboard", "url": url, "icon": item_icon, "badge": 0,
+                                  "active": here.startswith(url)})
+                    continue
                 if name == "@plans":
                     items.append({"name": "Plans", "url": plans, "icon": item_icon, "badge": 0,
                                   "active": any(here.startswith(u) for u in plan_pages)})

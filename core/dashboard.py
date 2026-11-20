@@ -142,7 +142,8 @@ def build(now=None) -> dict:
          + UserReport.objects.filter(status=UserReport.Status.OPEN).count()},
         {"label": "Messages to us", "icon": "mail", "tone": "blue", "url": _list("contactmessage", "handled__exact=0"),
          "badge": ContactMessage.objects.filter(handled=False).count()},
-        {"label": "Plans & prices", "icon": "layers", "tone": "green", "url": reverse("admin:sales")},
+        {"label": "Sales dashboard", "icon": "chart", "tone": "green", "url": reverse("admin:sales_dashboard")},
+        {"label": "Plans & prices", "icon": "layers", "tone": "violet", "url": reverse("admin:sales")},
         {"label": "New offer", "icon": "gift", "tone": "amber", "url": reverse("admin:core_offer_add")},
         {"label": "Add a price", "icon": "plus", "tone": "violet", "url": reverse("admin:core_product_add")},
         {"label": "Chats", "icon": "chat", "tone": "violet", "url": _list("conversation")},
@@ -174,7 +175,7 @@ def build(now=None) -> dict:
             {"user": e.user.display_name or e.user.email, "url": _link("user", e.user_id), "at": e.at,
              "method": e.get_method_display(), "device": e.device, "country": country(e.country), "ip": e.ip,
              "advertiser": e.user.is_advertiser}
-            for e in LoginEvent.objects.select_related("user").order_by("-at")[:12]
+            for e in LoginEvent.objects.select_related("user").order_by("-at")[:LIST_SIZE]
         ],
         "now": now,
     }

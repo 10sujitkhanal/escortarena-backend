@@ -1,4 +1,5 @@
 from django import forms
+from django.db import models
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.shortcuts import redirect
@@ -41,6 +42,79 @@ from .models import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Photos in the lists: a small picture per row (click = full size). One subquery per list, not one query per row.
+# ---------------------------------------------------------------------------
+
+def _media_url(name: str) -> str:
+    from django.core.files.storage import default_storage
+    return default_storage.url(name) if name else ""
+
+
+def thumb(name: str, *, round_: bool = False, size: int = 46, fallback: str = "", badge: str = ""):
+    """<img> for a stored file name (or a grey placeholder with `fallback` text)."""
+    radius = "50%" if round_ else "10px"
+    if not name:
+        return format_html(
+            '<span style="display:inline-grid;place-items:center;width:{0}px;height:{0}px;border-radius:{1};'
+            'background:var(--darkened-bg);color:var(--body-quiet-color);font-weight:800;font-size:.8rem">{2}</span>',
+            size, radius, (fallback or "–")[:2].upper())
+    url = _media_url(name)
+    extra = format_html('<span style="position:absolute;right:-4px;bottom:-4px;background:#e94fc2;color:#fff;font-size:.65rem;'
+                        'font-weight:800;border-radius:999px;padding:1px 5px">{}</span>', badge) if badge else ""
+    return format_html(
+        '<a href="{0}" target="_blank" rel="noopener" style="position:relative;display:inline-block" title="Open full size">'
+        '<img src="{0}" alt="" loading="lazy" style="width:{1}px;height:{1}px;object-fit:cover;border-radius:{2};display:block">{3}</a>',
+        url, size, radius, extra)
+
+
+def _ad_cover(ref: str):
+    from django.db.models import OuterRef, Subquery
+    return Subquery(AdPicture.objects.filter(ad=OuterRef(ref)).order_by("position", "id").values("image")[:1])
+
+
+def _user_photo(ref: str):
+    """Profile picture, else the photo of the person's newest ad."""
+    from django.db.models import OuterRef, Subquery
+    from django.db.models.functions import Coalesce, NullIf
+    text = models.CharField()
+    profile = Subquery(User.objects.filter(pk=OuterRef(ref)).values("profile_picture")[:1], output_field=text)
+    ad_photo = Subquery(AdPicture.objects.filter(ad__owner=OuterRef(ref)).order_by("-ad__created_at", "position", "id")
+                        .values("image")[:1], output_field=text)
+    return Coalesce(NullIf(profile, models.Value("")), ad_photo, output_field=text)
+
+
+class PhotoColumnMixin:
+    """Adds a "Photo" column. Set photo_ad (path to the ad, "pk" for ads) or photo_user (path to the user)."""
+
+    photo_ad: str | None = None
+    photo_user: str | None = None
+    photo_round = False
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if self.photo_ad:
+            qs = qs.annotate(_photo=_ad_cover(self.photo_ad))
+        elif self.photo_user:
+            qs = qs.annotate(_photo=_user_photo(self.photo_user))
+        return qs
+
+    def _photo_fallback(self, obj) -> str:
+        return ""
+
+    def get_list_display_links(self, request, list_display):
+        """The photo opens the picture, so the next column (title, e-mail, …) opens the row."""
+        links = super().get_list_display_links(request, list_display)
+        if links and list(links)[:1] == ["photo"]:
+            rest = [c for c in list_display if c not in ("photo", "screenshots", "action_checkbox")]
+            return rest[:1]
+        return links
+
+    @admin.display(description="Photo")
+    def photo(self, obj):
+        return thumb(getattr(obj, "_photo", "") or "", round_=bool(self.photo_user), fallback=self._photo_fallback(obj))
+
+
 class LoginEventInline(admin.TabularInline):
     """Every sign-in of this user, newest first (no IP addresses are kept)."""
 
@@ -55,9 +129,10 @@ class LoginEventInline(admin.TabularInline):
 
 
 @admin.register(User)
-class UserAdmin(BaseUserAdmin):
+class UserAdmin(PhotoColumnMixin, BaseUserAdmin):
+    photo_user = "pk"
     ordering = ["-date_joined"]
-    list_display = ["email", "display_name", "kind", "country", "ad_count", "age_verified", "date_joined", "last_login",
+    list_display = ["photo", "email", "display_name", "kind", "country", "ad_count", "age_verified", "date_joined", "last_login",
                     "login_count"]
     list_filter = ["is_advertiser", "age_verified", "is_staff", "is_active", "phone_country"]
     search_fields = ["email", "display_name", "phone"]
@@ -100,10 +175,11 @@ class UserAdmin(BaseUserAdmin):
 
 
 @admin.register(LoginEvent)
-class LoginEventAdmin(admin.ModelAdmin):
+class LoginEventAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_user = "user"
     """Read-only list of every sign-in."""
 
-    list_display = ["at", "user", "is_advertiser", "method", "device", "ip", "country"]
+    list_display = ["photo", "at", "user", "is_advertiser", "method", "device", "ip", "country"]
     list_filter = ["method", "user__is_advertiser", "country"]
     search_fields = ["user__email", "user__display_name", "ip"]
     date_hierarchy = "at"
@@ -179,8 +255,9 @@ class ReviewerFilter(admin.SimpleListFilter):
 
 
 @admin.register(Ad)
-class AdAdmin(admin.ModelAdmin):
-    list_display = ["title", "owner", "category", "region", "status", "review", "tier", "tier_until", "owner_verified",
+class AdAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_ad = "pk"
+    list_display = ["photo", "title", "owner", "category", "region", "status", "review", "tier", "tier_until", "owner_verified",
                     "open_reports", "published_at", "expires_at"]
     list_filter = ["status", AdReviewStateFilter, ReviewerFilter, "tier", "category", "region", "gender"]
     search_fields = ["title", "description", "owner__email", "phone"]
@@ -214,6 +291,16 @@ class AdAdmin(admin.ModelAdmin):
             from django.utils import timezone
             obj.reviewed_by, obj.reviewed_at = request.user, timezone.now()
         super().save_model(request, obj, form, change)
+
+    def get_queryset(self, request):
+        from django.db.models import Count, OuterRef, Subquery
+        n = AdPicture.objects.filter(ad=OuterRef("pk")).values("ad").annotate(c=Count("id")).values("c")
+        return super().get_queryset(request).annotate(_photos=Subquery(n))
+
+    @admin.display(description="Photo")
+    def photo(self, obj):
+        n = obj._photos or 0
+        return thumb(obj._photo or "", size=52, fallback="no", badge=str(n) if n > 1 else "")
 
     @admin.display(description="Review", ordering="reviewed_at")
     def review(self, obj):
@@ -308,10 +395,23 @@ class StatusTabsMixin:
 
 
 @admin.register(Report)
-class ReportAdmin(StatusTabsMixin, admin.ModelAdmin):
+class ReportAdmin(PhotoColumnMixin, StatusTabsMixin, admin.ModelAdmin):
+    photo_ad = "ad"
     TABS = [("open", "Open"), ("resolved", "Resolved"), ("dismissed", "Dismissed"), ("draft", "Not confirmed yet"), ("all", "All")]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("images")
+
+    @admin.display(description="Screenshots")
+    def screenshots(self, obj):
+        from django.utils.html import format_html_join
+        imgs = list(obj.images.all())[:4]
+        if not imgs:
+            return "–"
+        return format_html_join("", '<span style="display:inline-block;margin-right:4px">{}</span>',
+                                ((thumb(i.image.name, size=38),) for i in imgs))
     inlines = [ReportImageInline]
-    list_display = ["created_at", "urgent", "reason", "ad", "status", "reporter_name", "contact_email"]
+    list_display = ["photo", "screenshots", "created_at", "urgent", "reason", "ad", "status", "reporter_name", "contact_email"]
     list_filter = ["status", "reason"]
     search_fields = ["message", "ad__title", "contact_email"]
     actions = ["resolve_and_pause_ad", "dismiss"]
@@ -352,7 +452,8 @@ class TagAdmin(admin.ModelAdmin):
 
 @admin.register(Topic)
 class TopicAdmin(admin.ModelAdmin):
-    list_display = ["title", "kind", "slug", "aliases", "is_published", "show_in_menu", "menu_order", "published_at", "has_pdf"]
+    list_display_links = ["title"]
+    list_display = ["cover", "title", "kind", "slug", "aliases", "is_published", "show_in_menu", "menu_order", "published_at", "has_pdf"]
     list_filter = ["kind", "is_published", "show_in_menu"]
     prepopulated_fields = {"slug": ["title"]}
     search_fields = ["title", "body"]
@@ -360,6 +461,10 @@ class TopicAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description="PDF")
     def has_pdf(self, obj):
         return bool(obj.document)
+
+    @admin.display(description="Cover")
+    def cover(self, obj):
+        return thumb(obj.image.name if obj.image else "", size=52, fallback="–")
 
 
 admin.site.register(Heart)
@@ -447,8 +552,9 @@ class AddOnGroupAdmin(admin.ModelAdmin):
 
 
 @admin.register(Order)
-class OrderAdmin(admin.ModelAdmin):
-    list_display = ["order_id", "created_at", "user", "ad", "product_name", "amount_display", "status", "gateway", "paid_at"]
+class OrderAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_ad = "ad"
+    list_display = ["photo", "order_id", "created_at", "user", "ad", "product_name", "amount_display", "status", "gateway", "paid_at"]
     list_filter = ["status", "gateway", "tier"]
     search_fields = ["order_id", "user__email", "ad__title", "gateway_payment_id"]
     readonly_fields = [f.name for f in Order._meta.fields]
@@ -493,10 +599,11 @@ class MessageInline(admin.TabularInline):
 
 
 @admin.register(Conversation)
-class ConversationAdmin(admin.ModelAdmin):
+class ConversationAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_ad = "ad"
     """For handling abuse reports. Open conversations only when there is a reason to."""
 
-    list_display = ["ad_title", "visitor", "advertiser", "last_message_at", "blocked_by"]
+    list_display = ["photo", "ad_title", "visitor", "advertiser", "last_message_at", "blocked_by"]
     search_fields = ["ad_title", "visitor__email", "advertiser__email"]
     readonly_fields = ["ad", "ad_title", "visitor", "advertiser", "created_at", "last_message_at", "visitor_read_at",
                        "advertiser_read_at", "blocked_by"]
@@ -546,16 +653,18 @@ class DiamondTransactionAdmin(admin.ModelAdmin):
 
 
 @admin.register(Comment)
-class CommentAdmin(admin.ModelAdmin):
-    list_display = ["created_at", "ad", "user", "body", "is_hidden"]
+class CommentAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_ad = "ad"
+    list_display = ["photo", "created_at", "ad", "user", "body", "is_hidden"]
     list_filter = ["is_hidden"]
     list_editable = ["is_hidden"]
     search_fields = ["body", "ad__title", "user__email"]
 
 
 @admin.register(AdReview)
-class AdReviewAdmin(admin.ModelAdmin):
-    list_display = ["created_at", "ad", "user", "rating", "body", "is_hidden"]
+class AdReviewAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_ad = "ad"
+    list_display = ["photo", "created_at", "ad", "user", "rating", "body", "is_hidden"]
     list_filter = ["is_hidden", "rating"]
     list_editable = ["is_hidden"]
     search_fields = ["body", "ad__title", "user__email"]
@@ -588,8 +697,9 @@ class ResubmittedFilter(admin.SimpleListFilter):
 
 
 @admin.register(IdVerification)
-class IdVerificationAdmin(admin.ModelAdmin):
-    list_display = ["user", "full_name", "document_type", "age", "status", "history", "created_at", "reviewed_at"]
+class IdVerificationAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_user = "user"  # the public profile/ad photo – never the ID documents
+    list_display = ["photo", "user", "full_name", "document_type", "age", "status", "history", "created_at", "reviewed_at"]
     list_filter = ["status", "document_type", ResubmittedFilter]
     search_fields = ["user__email", "user__display_name", "full_name"]
     list_select_related = ["user"]
@@ -894,9 +1004,10 @@ class ChoiceOptionAdmin(InUseProtectedAdmin):
 
 
 @admin.register(UserReport)
-class UserReportAdmin(StatusTabsMixin, admin.ModelAdmin):
+class UserReportAdmin(PhotoColumnMixin, StatusTabsMixin, admin.ModelAdmin):
+    photo_user = "reported"
     TABS = [("open", "Open"), ("resolved", "Resolved"), ("dismissed", "Dismissed"), ("all", "All")]
-    list_display = ["created_at", "urgent", "reason", "reported", "reporter", "status", "chat"]
+    list_display = ["photo", "created_at", "urgent", "reason", "reported", "reporter", "status", "chat"]
     list_filter = ["status", "reason"]
     search_fields = ["message", "reported__email", "reporter__email"]
     raw_id_fields = ["reporter", "reported", "conversation"]
@@ -1030,8 +1141,9 @@ class FaqItemAdmin(admin.ModelAdmin):
 
 
 @admin.register(LegacyAccount)
-class LegacyAccountAdmin(admin.ModelAdmin):
-    list_display = ("legacy_username", "user", "invited_at", "claimed_at", "reward_tier", "reward_days")
+class LegacyAccountAdmin(PhotoColumnMixin, admin.ModelAdmin):
+    photo_user = "user"
+    list_display = ("photo", "legacy_username", "user", "invited_at", "claimed_at", "reward_tier", "reward_days")
     list_filter = (("invited_at", admin.EmptyFieldListFilter), ("claimed_at", admin.EmptyFieldListFilter), "reward_tier")
     search_fields = ("legacy_username", "user__email")
     readonly_fields = ("user", "ad", "legacy_id", "legacy_username", "legacy_ad_id", "data", "created_at", "claim_link")

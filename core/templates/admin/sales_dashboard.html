@@ -1,0 +1,187 @@
+{% extends "admin/base_site.html" %}
+{% load ea_admin %}
+{% comment %}Admin → Sales → Sales dashboard. Data: core/sales_dashboard.py (any day, month, year or own dates).{% endcomment %}
+
+{% block bodyclass %}{{ block.super }} ea-dashboard{% endblock %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Dashboard</a> › Sales › Sales dashboard</div>{% endblock %}
+{% block coltype %}colM{% endblock %}
+{% block content_title %}{% endblock %}
+{% block extrastyle %}{{ block.super }}<style>
+  .ea-dashboard #content { width: auto; max-width: 1560px; }
+  .sd-range { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .sd-range form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0; }
+  .sd-range input[type=date], .sd-range select { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border-color);
+                                               background: var(--body-bg); color: var(--body-fg); }
+  .sd-range button { padding: 8px 14px; border-radius: 10px; border: 0; background: var(--ea-pink); color: #fff; font-weight: 700; cursor: pointer; }
+  .sd-chg { display: inline-block; margin-left: 6px; font-size: .75rem; font-weight: 800; padding: 1px 7px; border-radius: 999px; }
+  .sd-chg.up { background: #16a34a22; color: #16a34a; } .sd-chg.down { background: #e5484d22; color: #e5484d; }
+  .sd-chart { display: flex; align-items: flex-end; gap: 4px; height: 240px; padding-top: 10px; }
+  .sd-chart .col { flex: 1; min-width: 6px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; position: relative; }
+  .sd-chart .stack { display: flex; flex-direction: column-reverse; justify-content: flex-start; height: calc(100% - 18px); }
+  .sd-chart .stack i { display: block; width: 100%; }
+  .sd-chart .stack i:last-child { border-radius: 4px 4px 0 0; }
+  .sd-chart .col:hover .stack { filter: brightness(1.15); }
+  .sd-chart .lbl { height: 18px; font-size: .62rem; color: var(--body-quiet-color); text-align: center; overflow: hidden; white-space: nowrap; }
+  .sd-chart .col:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+    background: var(--ea-panel); border: 1px solid var(--border-color); border-radius: 10px; padding: 6px 9px; font-size: .74rem; white-space: nowrap;
+    z-index: 5; box-shadow: 0 10px 30px #0004; }
+  .sd-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .78rem; color: var(--body-quiet-color); margin-top: 10px; }
+  .sd-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .sd-split { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--darkened-bg); margin: 4px 0 14px; }
+  .sd-split i { display: block; height: 100%; }
+  .sd-hbar { height: 8px; border-radius: 999px; background: var(--ea-pink); opacity: .8; }
+  .sd-year { display: flex; align-items: flex-end; gap: 10px; height: 200px; }
+  .sd-year .m { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+  .sd-year .pair { display: flex; gap: 3px; align-items: flex-end; height: calc(100% - 18px); }
+  .sd-year .pair i { flex: 1; border-radius: 4px 4px 0 0; display: block; }
+  .sd-year .lbl { height: 18px; text-align: center; font-size: .7rem; color: var(--body-quiet-color); }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ea-page">
+  <div class="ea-head">
+    <div><h1>Sales dashboard</h1><p>{{ period.label }} · {{ period.first_day|date:"j M Y" }}{% if period.days > 1 %} – {{ period.last_day|date:"j M Y" }}{% endif %} · paid orders in {{ currency }}</p></div>
+    <a class="ea-btn ghost" href="{% url 'admin:sales_export' %}?{{ export_qs }}"><svg class="ic"><use href="#i-receipt"/></svg>Download CSV</a>
+  </div>
+
+  {# Period picker #}
+  <div class="ea-card">
+    <div class="sd-range">
+      <nav class="ea-tabs" style="margin:0" aria-label="Period">
+        {% for key, label in presets %}<a href="?p={{ key }}" class="{% if period.key == key %}active{% endif %}">{{ label }}</a>{% endfor %}
+      </nav>
+    </div>
+    <div class="sd-range" style="margin-top:12px">
+      <form method="get">
+        <input type="hidden" name="p" value="custom">
+        <label>Any day or range: <input type="date" name="from" value="{{ period.first_day|date:'Y-m-d' }}"></label>
+        <label>to <input type="date" name="to" value="{{ period.last_day|date:'Y-m-d' }}"></label>
+        <button type="submit">Show</button>
+      </form>
+      <form method="get">
+        <select name="year" aria-label="Year" onchange="var y=this.value;this.form.from.value=y+'-01-01';this.form.to.value=y+'-12-31';this.form.submit()">
+          <option value="">Whole year…</option>
+          {% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
+        </select>
+        <input type="hidden" name="p" value="custom"><input type="hidden" name="from"><input type="hidden" name="to">
+      </form>
+    </div>
+  </div>
+
+  {# Key numbers vs the period before #}
+  <div class="ea-kpis">
+    {% for k in kpis %}
+      <div class="ea-card ea-kpi">
+        <div class="l">{{ k.label }}</div>
+        <div class="n">{{ k.value }}{% if k.change %}<span class="sd-chg {% if k.change.up %}up{% else %}down{% endif %}">{{ k.change.text }}</span>{% endif %}</div>
+        <div class="s">{% if k.sub %}{{ k.sub }}{% else %}before: {{ k.before }}{% endif %}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {# Money over time #}
+  <div class="ea-card">
+    <h2><span><svg class="ic"><use href="#i-chart"/></svg>Money in, per {{ unit }}</span><span class="ea-muted">hover a bar for the numbers</span></h2>
+    <div class="sd-chart">
+      {% for c in chart %}
+        <div class="col" data-tip="{{ c.label }}: {{ c.total }} · {{ c.tip }}">
+          <div class="stack">{% for p in c.parts %}{% if p.value %}<i style="height:{{ p.h }}%;background:{{ p.color }}"></i>{% endif %}{% endfor %}</div>
+          <div class="lbl">{% if chart|length <= 31 or forloop.counter0|divisibleby:3 %}{{ c.short }}{% endif %}</div>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="sd-legend">{% for t in types %}<span><i style="background:{{ t.color }}"></i>{{ t.label }}</span>{% endfor %}</div>
+  </div>
+
+  <div class="ea-grid">
+    {# What sells #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-layers"/></svg>What sells – by type</span></h2>
+      <div class="sd-split">{% for t in types %}{% if t.pct %}<i style="width:{{ t.pct }}%;background:{{ t.color }}" title="{{ t.label }} {{ t.pct }}%"></i>{% endif %}{% endfor %}</div>
+      <table class="ea-table">
+        <thead><tr><th>Type</th><th>Orders</th><th>Money</th><th>Share</th></tr></thead>
+        <tbody>{% for t in types %}<tr><td><span class="ea-pill" style="background:{{ t.color }}22;color:{{ t.color }}">{{ t.label }}</span></td><td>{{ t.count }}</td><td><b>{{ t.amount }}</b></td><td>{{ t.pct }}%</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-tag"/></svg>Top products</span></h2>
+      {% if top_products %}
+        <table class="ea-table">
+          <thead><tr><th>Product</th><th>Sold</th><th style="width:35%">Money</th></tr></thead>
+          <tbody>{% for p in top_products %}
+            <tr><td><b>{{ p.name|truncatechars:34 }}</b><br><small class="ea-muted">{{ p.kind }}</small></td><td>{{ p.count }}</td>
+              <td><div class="sd-hbar" style="width:{{ p.w }}%"></div><small><b>{{ p.amount_text }}</b></small></td></tr>
+          {% endfor %}</tbody>
+        </table>
+      {% else %}<div class="ea-empty">No sales in this period.</div>{% endif %}
+    </div>
+
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-rocket"/></svg>Add-ons sold</span></h2>
+      {% if addons %}
+        <table class="ea-table"><thead><tr><th>Add-on</th><th>Sold</th><th>Money</th></tr></thead>
+          <tbody>{% for a in addons %}<tr><td>{{ a.name }}</td><td>{{ a.count }}</td><td><b>{{ a.amount }}</b></td></tr>{% endfor %}</tbody></table>
+      {% else %}<div class="ea-empty">No add-ons sold in this period.</div>{% endif %}
+    </div>
+
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-globe"/></svg>Buyers by country</span></h2>
+      {% if countries %}
+        <table class="ea-table"><thead><tr><th>Country</th><th style="width:50%">Money</th></tr></thead>
+          <tbody>{% for c in countries %}<tr><td>{{ c.flag }} {{ c.name }}</td><td><div class="sd-hbar" style="width:{{ c.w }}%;background:var(--ea-violet)"></div><small><b>{{ c.amount }}</b></small></td></tr>{% endfor %}</tbody></table>
+      {% else %}<div class="ea-empty">No sales in this period.</div>{% endif %}
+    </div>
+
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-users"/></svg>Top buyers</span></h2>
+      {% if top_buyers %}
+        <table class="ea-table"><thead><tr><th>Who</th><th>Orders</th><th>Money</th></tr></thead>
+          <tbody>{% for b in top_buyers %}<tr><td class="ea-who"><b><a href="{{ b.url }}">{{ b.name|truncatechars:28 }}</a></b><small>{% if b.advertiser %}Advertiser{% else %}Visitor{% endif %} · {{ b.email|truncatechars:28 }}</small></td><td>{{ b.count }}</td><td><b>{{ b.amount }}</b></td></tr>{% endfor %}</tbody></table>
+      {% else %}<div class="ea-empty">No buyers in this period.</div>{% endif %}
+    </div>
+
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-receipt"/></svg>Checkouts by result</span></h2>
+      {% if statuses %}
+        <table class="ea-table"><thead><tr><th>Result</th><th>Orders</th><th>Amount</th></tr></thead>
+          <tbody>{% for s in statuses %}<tr><td><span class="ea-pill {% if s.key == 'paid' %}t-green{% elif s.key == 'failed' or s.key == 'cancelled' %}t-red{% elif s.key == 'refunded' %}t-amber{% else %}t-grey{% endif %}">{{ s.label }}</span></td><td>{{ s.count }}</td><td>{{ s.amount }}</td></tr>{% endfor %}</tbody></table>
+        {% if offers %}<p class="ea-muted" style="margin:10px 0 0;font-size:.8rem">Offers used: {% for name, n in offers %}{{ name }} ({{ n }}){% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+      {% else %}<div class="ea-empty">No checkouts in this period.</div>{% endif %}
+    </div>
+
+    {# Year view #}
+    <div class="ea-card ea-wide">
+      <h2><span><svg class="ic"><use href="#i-clock"/></svg>Year {{ year_view.year }} month by month</span>
+        <span>{{ year_view.total }} <span class="ea-muted">vs {{ year_view.prev_total }} in {{ year_view.year|add:"-1" }}</span>{% if year_view.change %}<span class="sd-chg {% if year_view.change.up %}up{% else %}down{% endif %}">{{ year_view.change.text }}</span>{% endif %}</span></h2>
+      <div class="sd-year">
+        {% for m in year_view.months %}
+          <div class="m" title="{{ m.name }}: {{ m.this }} ({{ year_view.year }}) · {{ m.prev }} ({{ year_view.year|add:'-1' }})">
+            <div class="pair"><i style="height:{{ m.h_prev }}%;background:var(--ea-violet);opacity:.45"></i><i style="height:{{ m.h_this }}%;background:var(--ea-pink)"></i></div>
+            <div class="lbl">{{ m.name }}</div>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="sd-legend"><span><i style="background:var(--ea-pink)"></i>{{ year_view.year }}</span><span><i style="background:var(--ea-violet);opacity:.45"></i>{{ year_view.year|add:"-1" }}</span>
+        <span>· other years: {% for y in years %}<a href="?p=custom&from={{ y }}-01-01&to={{ y }}-12-31&year={{ y }}">{{ y }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</span></div>
+    </div>
+
+    {# Orders in the period #}
+    <div class="ea-card ea-wide">
+      <h2><span><svg class="ic"><use href="#i-list"/></svg>Paid orders in this period</span><a href="{% url 'admin:sales_export' %}?{{ export_qs }}">Download all as CSV →</a></h2>
+      {% if recent %}
+        <div class="ea-scroll"><table class="ea-table">
+          <thead><tr><th>Order</th><th>Paid</th><th>Type</th><th>What</th><th>Who</th><th>Amount</th></tr></thead>
+          <tbody>{% for o in recent %}
+            <tr><td class="ea-nowrap"><a href="{{ o.url }}">{{ o.id }}</a></td><td class="ea-nowrap">{{ o.at|date:"j M Y, H:i" }}</td>
+              <td><span class="ea-pill t-grey">{{ o.kind }}</span></td>
+              <td>{{ o.what|truncatechars:34 }}{% if o.addons %}<br><small class="ea-muted">+ {{ o.addons|truncatechars:40 }}</small>{% endif %}</td>
+              <td><a href="{{ o.user_url }}">{{ o.user|truncatechars:26 }}</a></td><td class="ea-nowrap"><b>{{ o.amount }} {{ o.currency }}</b></td></tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% if recent_more %}<p class="ea-muted" style="margin:10px 0 0">+ {{ recent_more }} more – download the CSV for all of them.</p>{% endif %}
+      {% else %}<div class="ea-empty">No paid orders in this period.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

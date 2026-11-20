@@ -2106,7 +2106,7 @@ class AdminDashboardTests(Base):
         self.assertEqual(res.status_code, 200)
         html = res.content.decode()
         for text in ("Waiting for ID verification", "Anna Test", "Dash ad", "Creators with ads", "Latest 10 users",
-                     "Latest 10 advertisers", "Recent sign-ins", "Chrome · Android"):
+                     "Latest 10 advertisers", "Latest 10 login users", "Chrome · Android"):
             self.assertIn(text, html)
         sections = [a["name"] for a in res.context["available_apps"]]
         self.assertEqual(sections, ["Moderation", "People", "Chat", "Sales", "Content", "Site setup"])
@@ -2261,3 +2261,74 @@ class AdminModerationTests(Base):
         for text in ("Who bought what", "VIP – 1 week", "VIP members", "Latest reviews", "Reviewed ad", "Lovely",
                      "Open reports", "Contact messages", "Most viewed ads", "Paid plans ending", "Last 7 days"):
             self.assertContains(res, text)
+
+    def test_photo_columns_in_lists(self):
+        from django.core.files.base import ContentFile
+
+        from core.models import AdPicture, AdReview, Report, ReportImage, UserReport
+        ad = self.make_ad(title="With photo")
+        AdPicture.objects.create(ad=ad, image=ContentFile(b"x", name="a.webp"), position=0)
+        AdPicture.objects.create(ad=ad, image=ContentFile(b"x", name="b.webp"), position=1)
+        report = Report.objects.create(ad=ad, reason="fake", status="open")
+        ReportImage.objects.create(report=report, image=ContentFile(b"x", name="shot.png"))
+        UserReport.objects.create(reporter=self.visitor, reported=self.adv, reason="spam")
+        AdReview.objects.create(ad=ad, user=self.visitor, rating=5)
+        pages = ["/admin/core/user/", "/admin/core/ad/", "/admin/core/report/?status__exact=open",
+                 "/admin/core/userreport/?status__exact=open", "/admin/core/adreview/", "/admin/core/comment/",
+                 "/admin/core/order/", "/admin/core/conversation/", "/admin/core/idverification/?status__exact=pending",
+                 "/admin/core/legacyaccount/", "/admin/core/loginevent/", "/admin/core/topic/"]
+        for url in pages:
+            res = self.web.get(url)
+            self.assertEqual(res.status_code, 200, url)
+        ads = self.web.get("/admin/core/ad/").content.decode()
+        self.assertIn('class="field-photo"', ads)
+        self.assertIn("a.webp" if "a.webp" in ads else "/ads/", ads)
+        self.assertIn(">2</span>", ads)  # two photos on the ad
+        reports = self.web.get("/admin/core/report/?status__exact=open").content.decode()
+        self.assertIn("shot", reports)
+        users = self.web.get("/admin/core/user/").content.decode()
+        self.assertIn('<img src=', users)  # the advertiser shows the ad's photo
+
+    def test_sales_dashboard_periods_split_and_csv(self):
+        from core.models import Order, Product
+        plan = Product.objects.create(kind="plan", code="t-sales-vip7", name="VIP – 1 week", tier="vip", days=7, price=6900)
+        coins = Product.objects.create(kind="diamonds", code="t-sales-c100", name="100 coins", diamonds=100, price=10000)
+        now = timezone.now()
+
+        def paid(product, amount, when, addons=()):
+            o = Order.objects.create(user=self.adv, product=product, product_name=product.name, tier=product.tier,
+                                     days=product.days, amount=amount, currency="USD", status="paid", paid_at=when,
+                                     addons=list(addons))
+            Order.objects.filter(pk=o.pk).update(created_at=when)  # started when it was paid
+            return o
+        paid(plan, 6900 + 4900, now, [{"code": "top-7", "name": "First in search – 7 days", "effect": "top", "days": 7, "price": 4900}])
+        paid(coins, 10000, now - timedelta(days=3))
+        paid(plan, 6900, now - timedelta(days=40))  # outside the last 30 days, inside "the period before"
+
+        res = self.web.get("/admin/sales-dashboard/")
+        self.assertEqual(res.status_code, 200)
+        types = {t["key"]: t["amount"] for t in res.context["types"]}
+        self.assertEqual((types["plan"], types["addons"], types["diamonds"]), ("69.00", "49.00", "100.00"))
+        money_in = res.context["kpis"][0]
+        self.assertEqual((money_in["value"], money_in["before"]), ("218.00", "69.00"))
+        self.assertEqual(res.context["unit"], "day")
+        self.assertEqual(len(res.context["chart"]), 30)
+
+        day = (now - timedelta(days=3)).date().isoformat()
+        one_day = self.web.get(f"/admin/sales-dashboard/?p=custom&from={day}&to={day}")
+        self.assertEqual(one_day.context["kpis"][0]["value"], "100.00")
+        year = self.web.get(f"/admin/sales-dashboard/?p=custom&from={now.year}-01-01&to={now.year}-12-31&year={now.year}")
+        self.assertEqual(year.context["unit"], "month")
+        self.assertEqual(year.context["year_view"]["year"], now.year)
+        for p in ("today", "yesterday", "7d", "month", "last_month", "year", "last_year", "all"):
+            self.assertEqual(self.web.get(f"/admin/sales-dashboard/?p={p}").status_code, 200, p)
+
+        csv_res = self.web.get("/admin/sales-dashboard/export.csv?p=30d")
+        body = csv_res.content.decode("utf-8-sig")
+        self.assertEqual(csv_res["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("First in search – 7 days", body)
+        self.assertEqual(body.count("\n"), 3)  # header + the 2 orders of the last 30 days
+
+        plans = self.web.get("/admin/sales/").content.decode()
+        self.assertNotIn("<th>Sold</th>", plans)
+        self.assertNotIn("<th>Earned</th>", plans)

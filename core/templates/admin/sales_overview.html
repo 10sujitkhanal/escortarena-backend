@@ -19,7 +19,7 @@ Data: core/dashboard.py sales_overview(); tabs: core/admin_site.py sales_view().
 {% block content %}
 <div class="ea-page">
   <div class="ea-head">
-    <div><h1>Plans</h1><p>Every price on the site, with what it sold. Prices in {{ currency }}.</p></div>
+    <div><h1>Plans</h1><p>Every price on the site. Prices in {{ currency }}. What each one sold: <a href="{% url 'admin:sales_dashboard' %}">Sales dashboard</a>.</p></div>
   </div>
 
   <nav class="ea-tabs" aria-label="Price lists">
@@ -41,12 +41,12 @@ Data: core/dashboard.py sales_overview(); tabs: core/admin_site.py sales_view().
               <a href="{{ p.url }}">Edit</a></h3>
             {% if p.prices %}
               <table class="ea-table">
-                <thead><tr><th>Period</th><th>Price</th><th>Sold</th><th>30 d</th><th>Earned</th></tr></thead>
+                <thead><tr><th>Period</th><th>Price</th><th></th></tr></thead>
                 <tbody>
                 {% for r in p.prices %}
                   <tr class="{% if not r.active %}ea-off{% endif %}">
                     <td><a href="{{ r.url }}">{{ r.days|default:r.name }}</a></td>
-                    <td class="ea-price">{{ r.price }}</td><td>{{ r.sold }}</td><td>{{ r.sold_30d }}</td><td class="ea-nowrap">{{ r.earned }}</td>
+                    <td class="ea-price">{{ r.price }}</td><td>{% if not r.active %}<span class="ea-pill t-grey">Off</span>{% endif %}</td>
                   </tr>
                 {% endfor %}
                 </tbody>
@@ -80,10 +80,10 @@ Data: core/dashboard.py sales_overview(); tabs: core/admin_site.py sales_view().
             <p class="ea-muted" style="margin:0 0 8px;font-size:.8rem">{{ g.effect }}</p>
             {% if g.options %}
               <table class="ea-table">
-                <thead><tr><th>Option</th><th>Days</th><th>Price</th><th>Sold</th></tr></thead>
+                <thead><tr><th>Option</th><th>Days</th><th>Price</th></tr></thead>
                 <tbody>
                 {% for o in g.options %}
-                  <tr class="{% if not o.active %}ea-off{% endif %}"><td>{{ o.name }}</td><td>{{ o.days|default:"once" }}</td><td class="ea-price">{{ o.price }}</td><td>{{ o.sold }}</td></tr>
+                  <tr class="{% if not o.active %}ea-off{% endif %}"><td>{{ o.name }}</td><td>{{ o.days|default:"once" }}</td><td class="ea-price">{{ o.price }}</td></tr>
                 {% endfor %}
                 </tbody>
               </table>
