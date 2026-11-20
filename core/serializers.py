@@ -597,7 +597,8 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         fields = [
             "site_name", "tagline", "meta_title", "meta_description", "logo", "favicon", "accent_color",
             "accent_color_2", "contact_email", "country", "copyright_name", "facebook_url", "instagram_url",
-            "x_url", "about_intro", "support_hours", "free_ad_days", "currency", "coin_value", "updated_at",
+            "x_url", "about_intro", "support_hours", "free_ad_days", "currency", "coin_value", "show_view_counts",
+            "updated_at",
         ]
 
     def get_logo(self, obj):

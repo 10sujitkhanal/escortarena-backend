@@ -631,6 +631,11 @@ class SiteSettings(models.Model):
     free_ad_days = models.PositiveSmallIntegerField(
         default=7, help_text="Days a Free ad is live (one Free ad per advertiser at a time)."
     )
+    show_view_counts = models.BooleanField(
+        default=True,
+        help_text="On: visitors see how many views an ad and an advertiser have. Off: view counts are hidden on the "
+                  "site (advertisers still see their own statistics under My ads).",
+    )
     review_ads = models.BooleanField(
         default=False,
         help_text="Off: ads go live as soon as they are activated (and stay live when edited). "

@@ -217,7 +217,7 @@ class SiteSettingsAdmin(admin.ModelAdmin):
         ("Search engines", {"fields": ("meta_title", "meta_description")}),
         ("Contact & social", {"fields": ("contact_email", "support_hours", "facebook_url", "instagram_url", "x_url")}),
         ("About page & footer", {"fields": ("about_intro", "copyright_name", "country")}),
-        ("Ads", {"fields": ("review_ads", "free_ad_days", "slider_slots")}),
+        ("Ads", {"fields": ("review_ads", "free_ad_days", "slider_slots", "show_view_counts")}),
         ("Money", {"fields": ("currency", "coin_value"),
                    "description": "Changing the currency changes all plan and coin-package prices to that currency (the numbers stay)."}),
     )
