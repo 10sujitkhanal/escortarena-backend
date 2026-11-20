@@ -1,20 +1,22 @@
-{% load ea_admin %}{% comment %}A user table on the dashboard. rows: from core/dashboard.py; show_ads / show_role: extra columns.{% endcomment %}
+{% load ea_admin %}{% comment %}A user table on the dashboard. rows: from core/dashboard.py; show_ads / show_role: extra columns;
+compact: for half-width cards (country and e-mail on the second line, no separate country/logins columns).{% endcomment %}
 {% if rows %}
-  <div class="ea-scroll"><table class="ea-table">
+  <div class="{% if not compact %}ea-scroll{% endif %}"><table class="ea-table">
     <thead><tr>
-      <th>Name</th>{% if show_role %}<th>Type</th>{% endif %}<th>Country</th>{% if show_ads %}<th>Ads</th>{% endif %}
-      <th>Joined</th><th>Last login</th><th>Logins</th>
+      <th>Name</th>{% if show_role %}<th>Type</th>{% endif %}{% if not compact %}<th>Country</th>{% endif %}{% if show_ads %}<th>Ads</th>{% endif %}
+      <th>Joined</th><th>Last login</th>{% if not compact %}<th>Logins</th>{% endif %}
     </tr></thead>
     <tbody>
     {% for u in rows %}
       <tr>
-        <td class="ea-who"><b><a href="{{ u.url }}">{{ u.name|truncatechars:30 }}</a>{% if u.verified %} <span class="ea-pill t-blue" title="ID verified">✓ ID</span>{% endif %}</b><small>{{ u.email|truncatechars:34 }}</small></td>
+        <td class="ea-who"><b><a href="{{ u.url }}">{{ u.name|truncatechars:24 }}</a>{% if u.verified %} <span class="ea-pill t-blue" title="ID verified">✓ ID</span>{% endif %}</b>
+          <small>{% if compact and u.country %}{{ u.country.flag }} {{ u.country.name }} · {% endif %}{{ u.email|truncatechars:28 }}</small></td>
         {% if show_role %}<td>{% if u.advertiser %}<span class="ea-pill t-pink">Advertiser</span>{% elif u.vip %}<span class="ea-pill t-amber">VIP</span>{% else %}<span class="ea-pill t-grey">Visitor</span>{% endif %}</td>{% endif %}
-        <td class="ea-nowrap">{% if u.country %}{{ u.country.flag }} {{ u.country.name }}{% else %}–{% endif %}</td>
+        {% if not compact %}<td class="ea-nowrap">{% if u.country %}{{ u.country.flag }} {{ u.country.name }}{% else %}–{% endif %}</td>{% endif %}
         {% if show_ads %}<td class="ea-nowrap"><span class="ea-pill {% if u.live_ads %}t-green{% else %}t-grey{% endif %}">{{ u.live_ads }} live</span> <span class="ea-muted">/ {{ u.ads }}</span></td>{% endif %}
         <td class="ea-nowrap" title="{{ u.joined|date:'j M Y H:i' }}">{{ u.joined|date:"j M Y" }}</td>
-        <td class="ea-nowrap" title="{{ u.last_login|date:'j M Y H:i' }}">{% if u.last_login %}{{ u.last_login|ago }} ago{% else %}<span class="ea-muted">never</span>{% endif %}</td>
-        <td>{{ u.logins|default:"0" }}</td>
+        <td class="ea-nowrap" title="{{ u.last_login|date:'j M Y H:i' }}">{% if u.last_login %}{{ u.last_login|ago }} ago{% if compact %}<br><small class="ea-muted">{{ u.logins }} login{{ u.logins|pluralize }}</small>{% endif %}{% else %}<span class="ea-muted">never</span>{% endif %}</td>
+        {% if not compact %}<td>{{ u.logins|default:"0" }}</td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>

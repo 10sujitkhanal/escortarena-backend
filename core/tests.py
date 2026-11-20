@@ -2105,8 +2105,8 @@ class AdminDashboardTests(Base):
         res = web.get("/admin/")
         self.assertEqual(res.status_code, 200)
         html = res.content.decode()
-        for text in ("Waiting for ID verification", "Anna Test", "Dash ad", "Creators with ads", "Latest 10 users",
-                     "Latest 10 advertisers", "Latest 10 login users", "Chrome · Android"):
+        for text in ("Waiting for ID verification", "Anna Test", "Dash ad", "Creators with ads", "Latest users",
+                     "Latest advertisers", "Latest logins", "Chrome · Android"):
             self.assertIn(text, html)
         sections = [a["name"] for a in res.context["available_apps"]]
         self.assertEqual(sections, ["Moderation", "People", "Chat", "Sales", "Content", "Site setup"])

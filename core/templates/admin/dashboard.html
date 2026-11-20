@@ -43,61 +43,58 @@
     </div>
   </div>
 
-  {# Right after Quick access: latest users, logins, ads and creators #}
+  {# Right after Quick access, two per row: latest logins, latest ads, creators with ads, latest users #}
   <div class="ea-grid">
-    <div class="ea-card ea-wide">
-      <h2><span><svg class="ic"><use href="#i-users"/></svg>Latest 10 users</span><a href="{% url 'admin:core_user_changelist' %}">All users →</a></h2>
-      {% include "admin/_dash_users.html" with rows=latest_users show_role=True %}
-    </div>
-    {# Latest 10 login users #}
-    <div class="ea-card ea-wide">
-      <h2><span><svg class="ic"><use href="#i-login"/></svg>Latest 10 login users</span><a href="{% url 'admin:core_loginevent_changelist' %}">Login history →</a></h2>
+    {# Latest logins #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-login"/></svg>Latest logins</span><a href="{% url 'admin:core_loginevent_changelist' %}">Login history →</a></h2>
       {% if logins %}
-        <div class="ea-scroll"><table class="ea-table">
-          <thead><tr><th>Who</th><th>When</th><th>How</th><th>Device</th><th>IP</th><th>Country</th></tr></thead>
+        <table class="ea-table">
+          <thead><tr><th>Who</th><th>Where</th><th>When</th></tr></thead>
           <tbody>
           {% for e in logins %}
             <tr>
-              <td><a href="{{ e.url }}"><b>{{ e.user|truncatechars:36 }}</b></a> {% if e.advertiser %}<span class="ea-pill t-pink">Advertiser</span>{% endif %}</td>
-              <td class="ea-nowrap" title="{{ e.at|date:'j M Y H:i:s' }}">{{ e.at|date:"j M, H:i" }} <span class="ea-muted">({{ e.at|ago }} ago)</span></td>
-              <td>{{ e.method }}</td><td>{{ e.device|default:"–" }}</td><td class="ea-nowrap">{{ e.ip|default:"–" }}</td>
-              <td class="ea-nowrap">{% if e.country %}{{ e.country.flag }} {{ e.country.name }}{% else %}–{% endif %}</td>
+              <td class="ea-who"><b><a href="{{ e.url }}">{{ e.user|truncatechars:26 }}</a></b><small>{% if e.advertiser %}Advertiser{% else %}Visitor{% endif %} · {{ e.method }}</small></td>
+              <td class="ea-who"><b>{% if e.country %}{{ e.country.flag }} {{ e.country.name }}{% else %}–{% endif %}</b><small>{{ e.ip|default:"no IP" }}{% if e.device %} · {{ e.device }}{% endif %}</small></td>
+              <td class="ea-nowrap" title="{{ e.at|date:'j M Y H:i:s' }}">{{ e.at|ago }} ago<br><small class="ea-muted">{{ e.at|date:"j M, H:i" }}</small></td>
             </tr>
           {% endfor %}
           </tbody>
-        </table></div>
+        </table>
       {% else %}<div class="ea-empty">No sign-ins recorded yet – they appear here from now on.</div>{% endif %}
     </div>
+
     {# Latest ads #}
-    <div class="ea-card ea-wide">
-      <h2><span><svg class="ic"><use href="#i-ad"/></svg>Latest 10 ads</span><a href="{% url 'admin:core_ad_changelist' %}">All ads →</a></h2>
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-ad"/></svg>Latest ads</span><a href="{% url 'admin:core_ad_changelist' %}">All ads →</a></h2>
       {% if latest_ads %}
-        <div class="ea-scroll"><table class="ea-table">
-          <thead><tr><th>Ad</th><th>Advertiser</th><th>Country</th><th>Status</th><th>Plan</th><th>Photos</th><th>Created</th></tr></thead>
+        <table class="ea-table">
+          <thead><tr><th>Ad</th><th>Status</th><th>Created</th></tr></thead>
           <tbody>
           {% for a in latest_ads %}
             <tr>
-              <td><a href="{{ a.url }}"><b>{{ a.title|truncatechars:52 }}</b></a></td>
-              <td><a href="{{ a.owner_url }}">{{ a.owner|truncatechars:28 }}</a></td>
-              <td class="ea-nowrap">{% if a.country %}{{ a.country.flag }} {{ a.country.name }}{% else %}–{% endif %}</td>
-              <td><span class="ea-pill {% if a.live %}t-green{% elif a.status_key == 'pending' %}t-amber{% elif a.status_key == 'rejected' %}t-red{% else %}t-grey{% endif %}">{% if a.live %}Live{% else %}{{ a.status }}{% endif %}</span></td>
-              <td><span class="ea-pill {% if a.tier != 'free' %}t-pink{% else %}t-grey{% endif %}">{{ a.tier|capfirst }}</span></td>
-              <td>{{ a.pictures }}</td>
-              <td class="ea-nowrap" title="{{ a.created|date:'j M Y H:i' }}">{{ a.created|date:"j M Y, H:i" }}</td>
+              <td class="ea-who"><b><a href="{{ a.url }}">{{ a.title|truncatechars:34 }}</a></b><small><a href="{{ a.owner_url }}">{{ a.owner|truncatechars:20 }}</a>{% if a.country %} · {{ a.country.flag }} {{ a.country.name }}{% endif %} · {{ a.pictures }} photo{{ a.pictures|pluralize }}</small></td>
+              <td class="ea-nowrap"><span class="ea-pill {% if a.live %}t-green{% elif a.status_key == 'pending' %}t-amber{% elif a.status_key == 'rejected' %}t-red{% else %}t-grey{% endif %}">{% if a.live %}Live{% else %}{{ a.status }}{% endif %}</span>
+                <span class="ea-pill {% if a.tier != 'free' %}t-pink{% else %}t-grey{% endif %}">{{ a.tier|capfirst }}</span></td>
+              <td class="ea-nowrap" title="{{ a.created|date:'j M Y H:i' }}">{{ a.created|ago }} ago<br><small class="ea-muted">{{ a.created|date:"j M Y" }}</small></td>
             </tr>
           {% endfor %}
           </tbody>
-        </table></div>
+        </table>
       {% else %}<div class="ea-empty">No ads yet.</div>{% endif %}
     </div>
 
     {# Creators with ads, by last sign-in #}
-    <div class="ea-card ea-wide">
+    <div class="ea-card">
       <h2><span><svg class="ic"><use href="#i-star"/></svg>Creators with ads – last signed in</span>
         <a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1&o=-8">All advertisers →</a></h2>
-      {% include "admin/_dash_users.html" with rows=creators show_ads=True %}
+      {% include "admin/_dash_users.html" with rows=creators show_ads=True compact=True %}
     </div>
 
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-users"/></svg>Latest users</span><a href="{% url 'admin:core_user_changelist' %}">All users →</a></h2>
+      {% include "admin/_dash_users.html" with rows=latest_users show_role=True compact=True %}
+    </div>
   </div>
 
   {# Key numbers #}
@@ -349,7 +346,7 @@
     </div>
 
     <div class="ea-card ea-wide">
-      <h2><span><svg class="ic"><use href="#i-star"/></svg>Latest 10 advertisers</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1">All advertisers →</a></h2>
+      <h2><span><svg class="ic"><use href="#i-star"/></svg>Latest advertisers</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=1">All advertisers →</a></h2>
       {% include "admin/_dash_users.html" with rows=latest_advertisers show_ads=True %}
     </div>
 
