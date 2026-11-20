@@ -1,9 +1,9 @@
 {% extends "admin/base_site.html" %}
-{% comment %}Admin → Sales overview: every price list (ad plans, add-ons, visitor VIP, coins, offers) and what it sold.
-Data: core/dashboard.py sales_overview(). Edit links open the normal admin pages.{% endcomment %}
+{% comment %}Admin → Sales → Plans: one tab per price list (Ads plan, VIP plan, Coin packages, Add-ons) with what each sold.
+Data: core/dashboard.py sales_overview(); tabs: core/admin_site.py sales_view(). Edit links open the normal admin pages.{% endcomment %}
 
 {% block bodyclass %}{{ block.super }} ea-dashboard{% endblock %}
-{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Dashboard</a> › Sales overview</div>{% endblock %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Dashboard</a> › Sales › Plans</div>{% endblock %}
 {% block coltype %}colM{% endblock %}
 {% block content_title %}{% endblock %}
 {% block extrastyle %}{{ block.super }}<style>
@@ -19,121 +19,79 @@ Data: core/dashboard.py sales_overview(). Edit links open the normal admin pages
 {% block content %}
 <div class="ea-page">
   <div class="ea-head">
-    <div><h1>Sales overview</h1><p>Every price on the site in one place, with what it sold. Prices in {{ currency }}.</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <a class="ea-btn" href="{{ links.add_price }}"><svg class="ic"><use href="#i-plus"/></svg>Add a price</a>
-      <a class="ea-btn ghost" href="{{ links.add_addon }}">New add-on</a>
-      <a class="ea-btn ghost" href="{{ links.add_offer }}">New offer</a>
-      <a class="ea-btn ghost" href="{{ links.orders }}">All orders</a>
-    </div>
+    <div><h1>Plans</h1><p>Every price on the site, with what it sold. Prices in {{ currency }}.</p></div>
   </div>
 
-  <div class="ea-kpis">
-    {% for t in totals %}
-      <div class="ea-card ea-kpi">
-        <span class="ico t-green"><svg class="ic"><use href="#i-money"/></svg></span>
-        <div class="l">{{ t.label }}</div><div class="n">{{ t.amount }}</div><div class="s">{{ t.orders }} paid orders</div>
-      </div>
+  <nav class="ea-tabs" aria-label="Price lists">
+    {% for t in plan_tabs %}
+      <a href="{{ t.url }}" class="{% if t.active %}active{% endif %}"{% if t.active %} aria-current="page"{% endif %}>
+        <svg class="ic"><use href="#i-{{ t.icon }}"/></svg>{{ t.label }} <span class="n">{{ t.count }}</span>
+      </a>
     {% endfor %}
-  </div>
+  </nav>
 
-  {# Ad plans #}
-  <div class="ea-card">
-    <h2><span><svg class="ic"><use href="#i-layers"/></svg>Plans for ads</span><a href="{{ links.plans }}">Edit plans →</a></h2>
-    <div class="ea-grid-3">
-      {% for p in plans %}
-        <div class="ea-plan">
-          <h3><span>{{ p.name }} {% if p.highlighted %}<span class="ea-pill t-pink">Most popular</span>{% endif %}{% if not p.active %}<span class="ea-pill t-grey">Off</span>{% endif %}</span>
-            <a href="{{ p.url }}">Edit</a></h3>
-          {% if p.prices %}
-            <table class="ea-table">
-              <thead><tr><th>Period</th><th>Price</th><th>Sold</th><th>30 d</th><th>Earned</th></tr></thead>
-              <tbody>
-              {% for r in p.prices %}
-                <tr class="{% if not r.active %}ea-off{% endif %}">
-                  <td><a href="{{ r.url }}">{{ r.days|default:r.name }}</a></td>
-                  <td class="ea-price">{{ r.price }}</td><td>{{ r.sold }}</td><td>{{ r.sold_30d }}</td><td class="ea-nowrap">{{ r.earned }}</td>
-                </tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          {% else %}<div class="ea-empty">{% if p.tier == 'free' %}Free – no price needed.{% else %}No prices yet.{% endif %}</div>{% endif %}
-        </div>
-      {% empty %}<div class="ea-empty">No plans yet.</div>{% endfor %}
-    </div>
-  </div>
-
-  {# Add-ons #}
-  <div class="ea-card">
-    <h2><span><svg class="ic"><use href="#i-rocket"/></svg>Add-ons for ads – First in search, Front page ad, Bump</span><a href="{{ links.add_addon }}">New add-on →</a></h2>
-    <div class="ea-grid-3">
-      {% for g in addons %}
-        <div class="ea-plan">
-          <h3><span>{{ g.name }} {% if g.badge %}<span class="ea-pill t-pink">{{ g.badge }}</span>{% endif %}{% if not g.active %}<span class="ea-pill t-grey">Off</span>{% endif %}</span><a href="{{ g.url }}">Edit</a></h3>
-          <p class="ea-muted" style="margin:0 0 8px;font-size:.8rem">{{ g.effect }}</p>
-          {% if g.options %}
-            <table class="ea-table">
-              <thead><tr><th>Option</th><th>Days</th><th>Price</th><th>Sold</th></tr></thead>
-              <tbody>
-              {% for o in g.options %}
-                <tr class="{% if not o.active %}ea-off{% endif %}"><td>{{ o.name }}</td><td>{{ o.days|default:"once" }}</td><td class="ea-price">{{ o.price }}</td><td>{{ o.sold }}</td></tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          {% else %}<div class="ea-empty">No options yet.</div>{% endif %}
-        </div>
-      {% empty %}<div class="ea-empty">No add-ons yet.</div>{% endfor %}
-    </div>
-  </div>
-
-  <div class="ea-grid">
+  {% if tab == "ads" %}
     <div class="ea-card">
-      <h2><span><svg class="ic"><use href="#i-gift"/></svg>Visitor VIP membership</span><a href="{{ links.add_price }}?kind=membership">Add →</a></h2>
+      <h2><span><svg class="ic"><use href="#i-layers"/></svg>Ads plan – Free, Standard, Premium, VIP</span>
+        <span style="display:flex;gap:8px"><a href="{{ links.add_price }}?kind=plan">Add a price →</a><a href="{{ links.plans }}">Edit plans →</a></span></h2>
+      <div class="ea-grid-3">
+        {% for p in plans %}
+          <div class="ea-plan">
+            <h3><span>{{ p.name }} {% if p.highlighted %}<span class="ea-pill t-pink">Most popular</span>{% endif %}{% if not p.active %}<span class="ea-pill t-grey">Off</span>{% endif %}</span>
+              <a href="{{ p.url }}">Edit</a></h3>
+            {% if p.prices %}
+              <table class="ea-table">
+                <thead><tr><th>Period</th><th>Price</th><th>Sold</th><th>30 d</th><th>Earned</th></tr></thead>
+                <tbody>
+                {% for r in p.prices %}
+                  <tr class="{% if not r.active %}ea-off{% endif %}">
+                    <td><a href="{{ r.url }}">{{ r.days|default:r.name }}</a></td>
+                    <td class="ea-price">{{ r.price }}</td><td>{{ r.sold }}</td><td>{{ r.sold_30d }}</td><td class="ea-nowrap">{{ r.earned }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            {% else %}<div class="ea-empty">{% if p.tier == 'free' %}Free – no price needed.{% else %}No prices yet.{% endif %}</div>{% endif %}
+          </div>
+        {% empty %}<div class="ea-empty">No plans yet.</div>{% endfor %}
+      </div>
+    </div>
+
+  {% elif tab == "vip" %}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-gift"/></svg>VIP plan – visitor membership</span><a href="{{ links.add_price }}?kind=membership">Add a price →</a></h2>
+      <p class="ea-muted" style="margin:-4px 0 12px;font-size:.84rem">VIP visitors can message, comment, review and watch videos.</p>
       {% include "admin/_sales_products.html" with rows=memberships empty="No VIP membership prices yet." %}
     </div>
+
+  {% elif tab == "coins" %}
     <div class="ea-card">
-      <h2><span><svg class="ic"><use href="#i-coin"/></svg>Coin packages</span><a href="{{ links.add_price }}?kind=diamonds">Add →</a></h2>
+      <h2><span><svg class="ic"><use href="#i-coin"/></svg>Coin packages</span><a href="{{ links.add_price }}?kind=diamonds">Add a package →</a></h2>
       {% include "admin/_sales_products.html" with rows=coins show_coins=True empty="No coin packages yet." %}
     </div>
 
+  {% else %}
     <div class="ea-card">
-      <h2><span><svg class="ic"><use href="#i-gift"/></svg>Offers</span><a href="{{ links.add_offer }}">New offer →</a></h2>
-      {% if offers %}
-        <div class="ea-scroll"><table class="ea-table">
-          <thead><tr><th>Offer</th><th>Discount</th><th>For</th><th>Until</th><th>Used</th></tr></thead>
-          <tbody>
-          {% for o in offers %}
-            <tr class="{% if not o.active %}ea-off{% endif %}">
-              <td><a href="{{ o.url }}"><b>{{ o.title|truncatechars:34 }}</b></a> {% if o.active %}<span class="ea-pill t-green">Running</span>{% endif %}</td>
-              <td>{{ o.discount }} %</td><td>{{ o.applies }}</td>
-              <td class="ea-nowrap">{% if o.until %}{{ o.until|date:"j M Y" }}{% else %}no end{% endif %}</td>
-              <td>{{ o.used }}{% if o.max %} / {{ o.max }}{% endif %}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table></div>
-      {% else %}<div class="ea-empty">No offers yet.</div>{% endif %}
+      <h2><span><svg class="ic"><use href="#i-rocket"/></svg>Add-ons – First in search, Front page ad, Bump</span><a href="{{ links.add_addon }}">New add-on →</a></h2>
+      <div class="ea-grid-3">
+        {% for g in addons %}
+          <div class="ea-plan">
+            <h3><span>{{ g.name }} {% if g.badge %}<span class="ea-pill t-pink">{{ g.badge }}</span>{% endif %}{% if not g.active %}<span class="ea-pill t-grey">Off</span>{% endif %}</span><a href="{{ g.url }}">Edit</a></h3>
+            <p class="ea-muted" style="margin:0 0 8px;font-size:.8rem">{{ g.effect }}</p>
+            {% if g.options %}
+              <table class="ea-table">
+                <thead><tr><th>Option</th><th>Days</th><th>Price</th><th>Sold</th></tr></thead>
+                <tbody>
+                {% for o in g.options %}
+                  <tr class="{% if not o.active %}ea-off{% endif %}"><td>{{ o.name }}</td><td>{{ o.days|default:"once" }}</td><td class="ea-price">{{ o.price }}</td><td>{{ o.sold }}</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            {% else %}<div class="ea-empty">No options yet.</div>{% endif %}
+          </div>
+        {% empty %}<div class="ea-empty">No add-ons yet.</div>{% endfor %}
+      </div>
     </div>
-
-    <div class="ea-card">
-      <h2><span><svg class="ic"><use href="#i-receipt"/></svg>Latest payments</span><a href="{{ links.orders }}?status__exact=paid">All →</a></h2>
-      {% if recent %}
-        <div class="ea-scroll"><table class="ea-table">
-          <thead><tr><th>Order</th><th>What</th><th>Who</th><th>Amount</th><th>Paid</th></tr></thead>
-          <tbody>
-          {% for o in recent %}
-            <tr>
-              <td class="ea-nowrap"><a href="{{ o.url }}">{{ o.id }}</a></td>
-              <td>{{ o.product|truncatechars:30 }}{% if o.addons %}<br><small class="ea-muted">+ {{ o.addons|truncatechars:40 }}</small>{% endif %}</td>
-              <td><a href="{{ o.user_url }}">{{ o.user|truncatechars:24 }}</a></td>
-              <td class="ea-price">{{ o.amount }} {{ o.currency }}</td>
-              <td class="ea-nowrap">{{ o.at|date:"j M, H:i" }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table></div>
-      {% else %}<div class="ea-empty">No payments yet.</div>{% endif %}
-    </div>
-  </div>
+  {% endif %}
 </div>
 {% endblock %}

@@ -132,6 +132,7 @@ def build(now=None) -> dict:
         })
 
     waiting_ads = Ad.objects.filter(status=Ad.Status.PENDING).count() if review_ads else 0
+    extra = _insights(now, country, region_country)
     quick = [
         {"label": "Check IDs", "icon": "id", "tone": "pink", "url": _list("idverification", "status__exact=pending"),
          "badge": pending_ids.count()},
@@ -141,7 +142,7 @@ def build(now=None) -> dict:
          + UserReport.objects.filter(status=UserReport.Status.OPEN).count()},
         {"label": "Messages to us", "icon": "mail", "tone": "blue", "url": _list("contactmessage", "handled__exact=0"),
          "badge": ContactMessage.objects.filter(handled=False).count()},
-        {"label": "Sales overview", "icon": "chart", "tone": "green", "url": reverse("admin:sales")},
+        {"label": "Plans & prices", "icon": "layers", "tone": "green", "url": reverse("admin:sales")},
         {"label": "New offer", "icon": "gift", "tone": "amber", "url": reverse("admin:core_offer_add")},
         {"label": "Add a price", "icon": "plus", "tone": "violet", "url": reverse("admin:core_product_add")},
         {"label": "Chats", "icon": "chat", "tone": "violet", "url": _list("conversation")},
@@ -151,6 +152,7 @@ def build(now=None) -> dict:
         {"label": "Categories & options", "icon": "grid", "tone": "grey", "url": _list("adcategory")},
     ]
     return {
+        **extra,
         "quick": quick,
         "stats": stats,
         "alerts": alerts,
@@ -170,7 +172,7 @@ def build(now=None) -> dict:
         "latest_advertisers": with_ads(advertisers.order_by("-date_joined")),
         "logins": [
             {"user": e.user.display_name or e.user.email, "url": _link("user", e.user_id), "at": e.at,
-             "method": e.get_method_display(), "device": e.device, "country": country(e.country),
+             "method": e.get_method_display(), "device": e.device, "country": country(e.country), "ip": e.ip,
              "advertiser": e.user.is_advertiser}
             for e in LoginEvent.objects.select_related("user").order_by("-at")[:12]
         ],
@@ -272,4 +274,87 @@ def sales_overview(now=None) -> dict:
             "add_offer": reverse("admin:core_offer_add"), "orders": _list("order"),
             "plans": _list("plan"), "products": _list("product"),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# More dashboard insight: who bought what, VIP members, reviews, reports, messages, top ads, plans ending
+# ---------------------------------------------------------------------------
+
+def _insights(now, country, region_country) -> dict:
+    from .models import AdDailyView, AdReview, Product
+
+    kind_label = {Product.Kind.PLAN: ("Ads plan", "pink"), Product.Kind.MEMBERSHIP: ("VIP plan", "amber"),
+                  Product.Kind.DIAMONDS: ("Coins", "violet")}
+
+    def who(u):
+        return {"name": u.display_name or u.email, "email": u.email, "url": _link("user", u.pk)}
+
+    purchases = []
+    for o in (Order.objects.filter(status=Order.Status.PAID).select_related("user", "product", "ad")
+              .order_by("-paid_at")[:LIST_SIZE]):
+        label, tone = kind_label.get(o.product.kind, ("Other", "grey"))
+        purchases.append({
+            "url": _link("order", o.pk), "kind": label, "tone": tone, "what": o.product_name,
+            "addons": ", ".join(a.get("name", "") for a in (o.addons or [])), "user": who(o.user),
+            "ad": o.ad.title if o.ad_id else "", "ad_url": _link("ad", o.ad_id) if o.ad_id else "",
+            "amount": f"{o.amount / 100:,.2f} {o.currency}".replace(",", " "), "at": o.paid_at,
+        })
+
+    vip_orders = {}
+    for o in (Order.objects.filter(status=Order.Status.PAID, product__kind=Product.Kind.MEMBERSHIP)
+              .order_by("user_id", "-paid_at")):
+        vip_orders.setdefault(o.user_id, o)
+    vip_members = []
+    for u in User.objects.filter(is_advertiser=False, vip_until__gt=now).order_by("-vip_until")[:LIST_SIZE]:
+        o = vip_orders.get(u.pk)
+        vip_members.append({**who(u), "until": u.vip_until, "plan": o.product_name if o else "Given by admin",
+                            "since": o.paid_at if o else None, "country": country(u.phone_country)})
+
+    reviews = [
+        {"url": _link("adreview", r.pk), "ad": r.ad.title, "ad_url": _link("ad", r.ad_id), "user": who(r.user),
+         "rating": r.rating, "stars": "★" * r.rating + "☆" * (5 - r.rating), "body": r.body, "at": r.created_at,
+         "hidden": r.is_hidden}
+        for r in AdReview.objects.select_related("ad", "user").order_by("-created_at")[:8]
+    ]
+
+    reports = []
+    for r in Report.objects.filter(status=Report.Status.OPEN).select_related("ad").order_by("-created_at")[:8]:
+        reports.append({"url": _link("report", r.pk), "type": "Ad", "about": r.ad.title, "reason": r.get_reason_display(),
+                        "text": r.message if hasattr(r, "message") else "", "at": r.created_at})
+    for r in UserReport.objects.filter(status=UserReport.Status.OPEN).select_related("reported").order_by("-created_at")[:8]:
+        reports.append({"url": _link("userreport", r.pk), "type": "User", "about": r.reported.display_name or r.reported.email,
+                        "reason": r.get_reason_display(), "text": r.message, "at": r.created_at})
+    reports.sort(key=lambda x: x["at"], reverse=True)
+
+    contacts = [
+        {"url": _link("contactmessage", m.pk), "name": m.name, "email": m.email, "topic": m.get_topic_display(),
+         "text": m.message, "at": m.created_at, "handled": m.handled, "replies": m.n_replies}
+        for m in ContactMessage.objects.annotate(n_replies=Count("replies")).order_by("handled", "-created_at")[:6]
+    ]
+
+    week_start = timezone.localdate(now) - timedelta(days=6)
+    top = (AdDailyView.objects.filter(day__gte=week_start).values("ad").annotate(views=Sum("count"))
+           .order_by("-views")[:8])
+    ads = {a.pk: a for a in Ad.objects.filter(pk__in=[t["ad"] for t in top]).select_related("owner")}
+    top_ads = [{"url": _link("ad", t["ad"]), "title": ads[t["ad"]].title, "owner": ads[t["ad"]].owner.display_name or ads[t["ad"]].owner.email,
+                "views": t["views"], "tier": ads[t["ad"]].effective_tier} for t in top if t["ad"] in ads]
+
+    ending = [
+        {"url": _link("ad", a.pk), "title": a.title, "owner": who(a.owner), "tier": a.get_tier_display(), "until": a.tier_until}
+        for a in (Ad.objects.filter(tier_until__gt=now, tier_until__lte=now + timedelta(days=7)).exclude(tier="free")
+                  .select_related("owner").order_by("tier_until")[:8])
+    ]
+
+    week = now - timedelta(days=7)
+    posters = User.objects.filter(ads__created_at__gte=week).distinct().count()
+    return {
+        "purchases": purchases, "vip_members": vip_members, "reviews": reviews, "open_reports": reports[:8],
+        "contacts": contacts, "top_ads": top_ads, "ending": ending,
+        "week": {"new_ads": Ad.objects.filter(created_at__gte=week).count(), "posters": posters,
+                 "reviews": AdReview.objects.filter(created_at__gte=week).count(),
+                 "vip_bought": Order.objects.filter(status=Order.Status.PAID, paid_at__gte=week,
+                                                    product__kind=Product.Kind.MEMBERSHIP).count(),
+                 "plans_bought": Order.objects.filter(status=Order.Status.PAID, paid_at__gte=week,
+                                                      product__kind=Product.Kind.PLAN).count()},
     }

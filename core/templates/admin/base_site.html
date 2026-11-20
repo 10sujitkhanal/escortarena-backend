@@ -21,14 +21,7 @@
       {% if notif_new %}<span class="dot">{{ notif_new }}</span>{% endif %}
     </summary>
     <div class="panel">
-      <header>
-        <span>Notifications{% if notif_new %} · {{ notif_new }} new{% endif %}</span>
-        {% if notif_new %}
-          <form method="post" action="{% url 'admin:notifications_seen' %}">{% csrf_token %}
-            <input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit">Mark all as read</button>
-          </form>
-        {% endif %}
-      </header>
+      <header><span>Notifications{% if notif_new %} · {{ notif_new }} new{% endif %}</span></header>
       <ul class="ea-feed">
         {% for e in notif_items %}{% include "admin/_feed_item.html" %}{% empty %}
           <li class="ea-empty">Nothing new in the last 14 days.</li>
@@ -37,6 +30,23 @@
       <footer><a href="{% url 'admin:index' %}#activity">See all activity on the dashboard</a></footer>
     </div>
   </details>
+  {% if notif_new %}
+  <script>
+    // Opening the bell clears its count (the items stay marked as new in the open list until the next page).
+    (function () {
+      var bell = document.currentScript.previousElementSibling;
+      bell.addEventListener("toggle", function () {
+        if (!bell.open || bell.dataset.seen) return;
+        bell.dataset.seen = "1";
+        var dot = bell.querySelector(".dot");
+        if (dot) dot.remove();
+        var token = (document.cookie.match(/(?:^|; )csrftoken=([^;]+)/) || [])[1] || "";
+        fetch("{% url 'admin:notifications_seen' %}", {method: "POST", credentials: "same-origin",
+          headers: {"X-CSRFToken": decodeURIComponent(token), "X-Requested-With": "fetch"}});
+      });
+    })();
+  </script>
+  {% endif %}
   {% if site_url %}<a href="{{ site_url }}" target="_blank" rel="noopener">View site ↗</a>{% endif %}
   {% if user.has_usable_password %}<a href="{% url 'admin:password_change' %}">Password</a>{% endif %}
   <form id="logout-form" method="post" action="{% url 'admin:logout' %}">{% csrf_token %}<button type="submit">Log out</button></form>

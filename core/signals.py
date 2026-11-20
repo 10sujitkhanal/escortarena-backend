@@ -95,12 +95,22 @@ def login_method(path: str) -> str:
 def record_login(sender, request, user, **kwargs):
     from .models import LoginEvent
 
+    import ipaddress
+
     meta = getattr(request, "META", {}) if request is not None else {}
-    country = (meta.get("HTTP_CF_IPCOUNTRY") or "").upper()
+    sent = getattr(request, "data", None) or {}  # DRF request: what the website sent with the sign-in
+    sent = sent if hasattr(sent, "get") else {}
+    ip = str(sent.get("client_ip") or "").strip()[:45]
+    try:
+        ip = str(ipaddress.ip_address(ip)) if ip else None
+    except ValueError:
+        ip = None
+    country = str(sent.get("client_country") or meta.get("HTTP_CF_IPCOUNTRY") or "").strip().upper()
     try:
         LoginEvent.objects.create(
             user=user,
             method=login_method(getattr(request, "path", "")),
+            ip=ip,
             country=country if len(country) == 2 and country.isalpha() and country != "XX" else "",
             device=describe_device(meta.get("HTTP_USER_AGENT", "")),
         )

@@ -251,6 +251,9 @@ class Ad(models.Model):
 
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     rejection_reason = models.CharField(max_length=200, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                    related_name="+", help_text="The admin who last approved, rejected or paused the ad")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
     tier = models.CharField(max_length=10, choices=Tier.choices, default=Tier.FREE)
     tier_until = models.DateTimeField(null=True, blank=True, help_text="Paid tier ends at this time")
     top_until = models.DateTimeField(null=True, blank=True, help_text="Add-on: shown first in its plan until")
@@ -1154,6 +1157,24 @@ class ContactMessage(models.Model):
         return f"{self.get_topic_display()} – {self.name}"
 
 
+class ContactReply(models.Model):
+    """An answer from the team to a contact message. Sent by e-mail when saved in the admin; kept here as history."""
+
+    message = models.ForeignKey(ContactMessage, on_delete=models.CASCADE, related_name="replies")
+    body = models.TextField(max_length=4000)
+    sent_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    sent_at = models.DateTimeField(auto_now_add=True)
+    emailed = models.BooleanField(default=False, help_text="The e-mail was handed to the mail server")
+
+    class Meta:
+        ordering = ["sent_at"]
+        verbose_name = "reply"
+        verbose_name_plural = "replies"
+
+    def __str__(self):
+        return f"Reply to {self.message} – {self.sent_at:%Y-%m-%d %H:%M}"
+
+
 class ReportImage(models.Model):
     """Screenshot attached to a report (private – only moderators see it)."""
 
@@ -1444,8 +1465,9 @@ class LegacyAccount(models.Model):
 
 
 class LoginEvent(models.Model):
-    """One sign-in. Shown in the admin (dashboard, user page). No IP address is kept – only the country Cloudflare
-    reports for the visitor (CF-IPCountry) and a short device description."""
+    """One sign-in. Shown in the admin (dashboard, user page). IP and country are looked up by the website in the
+    visitor's browser (frontend lib/client-geo.ts) and sent with the sign-in; without them the country Cloudflare
+    reports is used. Plus a short device description."""
 
     class Method(models.TextChoices):
         PASSWORD = "password", "Password"
@@ -1458,7 +1480,8 @@ class LoginEvent(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="logins")
     at = models.DateTimeField(auto_now_add=True, db_index=True)
     method = models.CharField(max_length=10, choices=Method.choices, default=Method.OTHER)
-    country = models.CharField(max_length=2, blank=True, help_text="Country of the connection (from Cloudflare)")
+    ip = models.GenericIPAddressField("IP address", null=True, blank=True, help_text="Sent by the website at sign-in")
+    country = models.CharField(max_length=2, blank=True, help_text="Country of the connection (sent by the website)")
     device = models.CharField(max_length=60, blank=True, help_text="Browser and system, e.g. 'Chrome · Android'")
 
     class Meta:

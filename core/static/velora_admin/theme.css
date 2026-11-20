@@ -295,3 +295,15 @@ ul.messagelist li { border-radius: 12px; margin: 0 0 8px; }
 /* Wide tables scroll inside their box instead of pushing the page wider than the window. */
 .main > .content, #content, #content-main, #changelist, #changelist .changelist-form-container { min-width: 0; box-sizing: border-box; }
 #changelist .results { overflow-x: auto; }
+
+/* Tabs (ID verifications, Plans) */
+.ea-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.ea-tabs a { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; font-weight: 700; font-size: .86rem;
+             border: 1px solid var(--border-color); background: var(--ea-panel); color: var(--body-medium-color) !important;
+             text-decoration: none !important; transition: border-color .15s, background .15s; }
+.ea-tabs a:hover { border-color: var(--ea-pink); }
+.ea-tabs a .n { min-width: 22px; padding: 1px 7px; border-radius: 999px; background: var(--darkened-bg); text-align: center; font-size: .75rem; }
+.ea-tabs a.active { background: var(--ea-pink); border-color: var(--ea-pink); color: #fff !important; }
+.ea-tabs a.active .n { background: #ffffff33; color: #fff; }
+.ea-tabs a.tab-pending:not(.active) .n { background: var(--ea-pink); color: #fff; }
+.ea-tabs a.tab-pending:not(.active) .n, .ea-tabs a.tab-open:not(.active) .n, .ea-tabs a.tab-unhandled:not(.active) .n { background: var(--ea-pink); color: #fff; }

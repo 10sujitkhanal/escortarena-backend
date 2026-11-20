@@ -1,0 +1,8 @@
+{% comment %}Status tabs with counts above a list. tabs: [{key, label, count, active, url}] from the model's admin.{% endcomment %}
+<nav class="ea-tabs" aria-label="Filter by status">
+  {% for t in tabs %}
+    <a href="{{ t.url }}" class="{% if t.active %}active{% endif %} tab-{{ t.key }}"{% if t.active %} aria-current="page"{% endif %}>
+      {{ t.label }} <span class="n">{{ t.count }}</span>
+    </a>
+  {% endfor %}
+</nav>

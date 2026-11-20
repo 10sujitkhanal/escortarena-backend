@@ -7,7 +7,7 @@ and templates/admin/nav_sidebar.html.
 
 from django.contrib.admin import AdminSite
 from django.contrib.admin.apps import AdminConfig
-from django.http import HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -18,8 +18,8 @@ SECTIONS = [
                               ("Comment", "comment"), ("AdReview", "star"), ("ContactMessage", "mail")]),
     ("People", "users", [("User", "user"), ("LoginEvent", "login"), ("LegacyAccount", "move")]),
     ("Chat", "chat", [("Conversation", "chat")]),
-    ("Sales", "money", [("Order", "receipt"), ("Plan", "layers"), ("Product", "tag"), ("AddOnGroup", "rocket"),
-                        ("Offer", "gift"), ("DiamondTransaction", "coin")]),
+    # "@plans" is the Plans page (ad plans, VIP plan, coin packages, add-ons – one tab each), not a model.
+    ("Sales", "money", [("Order", "receipt"), ("Offer", "gift"), ("@plans", "layers"), ("DiamondTransaction", "coin")]),
     ("Content", "book", [("Topic", "book"), ("FaqItem", "help"), ("Tag", "tag")]),
     ("Site setup", "gear", [("SiteSettings", "gear"), ("Country", "globe"), ("AdRegion", "map"), ("AdPlace", "pin"),
                             ("AdCategory", "grid"), ("ChoiceOption", "list")]),
@@ -57,9 +57,21 @@ class VeloraAdminSite(AdminSite):
         data.update(feed=feed, chat=admin_feed.chat_stats(), sales_totals=dashboard.sales_overview()["totals"])
         return super().index(request, {**data, **(extra_context or {})})
 
+    PLAN_TABS = [("ads", "Ads plan", "layers"), ("vip", "VIP plan", "gift"), ("coins", "Coin packages", "coin"),
+                 ("addons", "Add-ons", "rocket")]
+
     def sales_view(self, request):
+        """Plans: one tab per price list – ad plans, visitor VIP, coin packages, add-ons (First in search, …)."""
         from . import dashboard
-        ctx = {**self.each_context(request), **dashboard.sales_overview(), "title": "Sales overview"}
+        data = dashboard.sales_overview()
+        tab = request.GET.get("tab", "ads")
+        if tab not in {key for key, _, _ in self.PLAN_TABS}:
+            tab = "ads"
+        sizes = {"ads": sum(len(p["prices"]) for p in data["plans"]), "vip": len(data["memberships"]),
+                 "coins": len(data["coins"]), "addons": sum(len(g["options"]) for g in data["addons"])}
+        tabs = [{"key": key, "label": label, "icon": icon, "count": sizes[key], "active": key == tab,
+                 "url": f"?tab={key}"} for key, label, icon in self.PLAN_TABS]
+        ctx = {**self.each_context(request), **data, "title": "Plans", "tab": tab, "plan_tabs": tabs}
         return TemplateResponse(request, "admin/sales_overview.html", ctx)
 
     def notifications_seen(self, request):
@@ -68,6 +80,8 @@ class VeloraAdminSite(AdminSite):
         if request.method != "POST":
             return HttpResponseRedirect(reverse("admin:index"))
         admin_feed.mark_seen(request)
+        if request.headers.get("X-Requested-With") == "fetch":  # the bell, opened in the header
+            return HttpResponse(status=204)
         back = request.POST.get("next") or reverse("admin:index")
         if not url_has_allowed_host_and_scheme(back, {request.get_host()}, require_https=request.is_secure()):
             back = reverse("admin:index")
@@ -98,14 +112,17 @@ class VeloraAdminSite(AdminSite):
         models = {m["object_name"]: m for app in available_apps for m in app["models"]}
         counts = self._badges()
         here = request.path
-        home, sales = reverse("admin:index"), reverse("admin:sales")
-        sections = [{"title": "", "items": [
-            {"name": "Dashboard", "url": home, "icon": "home", "active": here == home},
-            {"name": "Sales overview", "url": sales, "icon": "chart", "active": here == sales},
-        ]}]
+        home, plans = reverse("admin:index"), reverse("admin:sales")
+        # Price lists edited from the Plans page count as "Plans" in the menu too.
+        plan_pages = [plans] + [reverse(f"admin:core_{n}_changelist") for n in ("plan", "product", "addongroup")]
+        sections = [{"title": "", "items": [{"name": "Dashboard", "url": home, "icon": "home", "active": here == home}]}]
         for title, icon, names in SECTIONS:
             items = []
             for name, item_icon in names:
+                if name == "@plans":
+                    items.append({"name": "Plans", "url": plans, "icon": item_icon, "badge": 0,
+                                  "active": any(here.startswith(u) for u in plan_pages)})
+                    continue
                 m = models.get(name)
                 if not m or not m.get("admin_url"):
                     continue

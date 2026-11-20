@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.shortcuts import redirect
@@ -17,6 +18,7 @@ from .models import (
     ChoiceOption,
     Comment,
     ContactMessage,
+    ContactReply,
     Conversation,
     Country,
     DiamondTransaction,
@@ -46,7 +48,7 @@ class LoginEventInline(admin.TabularInline):
     extra = 0
     max_num = 0
     can_delete = False
-    fields = ["at", "method", "device", "country"]
+    fields = ["at", "method", "device", "ip", "country"]
     readonly_fields = fields
     ordering = ["-at"]
     verbose_name_plural = "Login history"
@@ -101,9 +103,9 @@ class UserAdmin(BaseUserAdmin):
 class LoginEventAdmin(admin.ModelAdmin):
     """Read-only list of every sign-in."""
 
-    list_display = ["at", "user", "is_advertiser", "method", "device", "country"]
+    list_display = ["at", "user", "is_advertiser", "method", "device", "ip", "country"]
     list_filter = ["method", "user__is_advertiser", "country"]
-    search_fields = ["user__email", "user__display_name"]
+    search_fields = ["user__email", "user__display_name", "ip"]
     date_hierarchy = "at"
     list_select_related = ["user"]
     list_per_page = 100
@@ -145,15 +147,82 @@ class AdVideoInline(admin.TabularInline):
         return "-"
 
 
+class AdReviewStateFilter(admin.SimpleListFilter):
+    title = "review"
+    parameter_name = "review"
+
+    def lookups(self, request, model_admin):
+        return [("admin", "Reviewed by an admin"), ("auto", "Went live without review"), ("waiting", "Waiting for review")]
+
+    def queryset(self, request, queryset):
+        if self.value() == "admin":
+            return queryset.filter(reviewed_by__isnull=False)
+        if self.value() == "auto":
+            return queryset.filter(reviewed_by__isnull=True, published_at__isnull=False)
+        if self.value() == "waiting":
+            return queryset.filter(status=Ad.Status.PENDING)
+        return queryset
+
+
+class ReviewerFilter(admin.SimpleListFilter):
+    """Only the admins who actually reviewed ads."""
+
+    title = "reviewed by"
+    parameter_name = "reviewer"
+
+    def lookups(self, request, model_admin):
+        ids = Ad.objects.filter(reviewed_by__isnull=False).values_list("reviewed_by", flat=True).distinct()
+        return [(u.pk, u.display_name or u.email) for u in User.objects.filter(pk__in=ids)]
+
+    def queryset(self, request, queryset):
+        return queryset.filter(reviewed_by_id=self.value()) if self.value() else queryset
+
+
 @admin.register(Ad)
 class AdAdmin(admin.ModelAdmin):
-    list_display = ["title", "owner", "category", "region", "status", "tier", "tier_until", "owner_verified", "open_reports", "published_at", "expires_at"]
-    list_filter = ["status", "tier", "category", "region", "gender"]
+    list_display = ["title", "owner", "category", "region", "status", "review", "tier", "tier_until", "owner_verified",
+                    "open_reports", "published_at", "expires_at"]
+    list_filter = ["status", AdReviewStateFilter, ReviewerFilter, "tier", "category", "region", "gender"]
     search_fields = ["title", "description", "owner__email", "phone"]
-    readonly_fields = ["view_count", "heart_count", "created_at", "updated_at"]
+    readonly_fields = ["view_count", "heart_count", "created_at", "updated_at", "reviewed_by", "reviewed_at"]
     filter_horizontal = ["tags"]
     inlines = [AdPictureInline, AdVideoInline]
     actions = ["approve", "reject", "pause"]
+    list_select_related = ["owner", "reviewed_by"]
+
+    # Tabs above the list (templates/admin/core/ad/change_list.html).
+    TABS = [("all", "All"), ("pending", "Waiting for review"), ("active", "Live"), ("rejected", "Rejected"),
+            ("paused", "Paused"), ("draft", "Drafts")]
+
+    def changelist_view(self, request, extra_context=None):
+        from django.db.models import Count
+        current = request.GET.get("status__exact", "all")
+        counts = dict(Ad.objects.values_list("status").annotate(n=Count("id")))
+        counts["all"] = sum(counts.values())
+        tabs = [{"key": k, "label": label, "count": counts.get(k, 0), "active": k == current,
+                 "url": "?" if k == "all" else f"?status__exact={k}"} for k, label in self.TABS]
+        return super().changelist_view(request, {**(extra_context or {}), "status_tabs": tabs})
+
+    @staticmethod
+    def mark_reviewed(ads, user):
+        from django.utils import timezone
+        Ad.objects.filter(pk__in=[a.pk for a in ads]).update(reviewed_by=user, reviewed_at=timezone.now())
+
+    def save_model(self, request, obj, form, change):
+        """Changing the status by hand on the ad's page counts as a review too."""
+        if change and "status" in form.changed_data and obj.status in (Ad.Status.ACTIVE, Ad.Status.REJECTED, Ad.Status.PAUSED):
+            from django.utils import timezone
+            obj.reviewed_by, obj.reviewed_at = request.user, timezone.now()
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description="Review", ordering="reviewed_at")
+    def review(self, obj):
+        if obj.status == Ad.Status.PENDING:
+            return format_html('<span style="color:#d48806;font-weight:700">Waiting</span>')
+        if obj.reviewed_by_id:
+            who = obj.reviewed_by.display_name or obj.reviewed_by.email
+            return format_html('<b>{}</b><br><small>{}</small>', who, obj.reviewed_at.strftime("%d %b %Y %H:%M") if obj.reviewed_at else "")
+        return format_html('<span style="opacity:.6">{}</span>', "Automatic" if obj.published_at else "–")
 
     @admin.display(boolean=True, description="Owner 18+ verified")
     def owner_verified(self, obj):
@@ -165,14 +234,15 @@ class AdAdmin(admin.ModelAdmin):
 
     @admin.action(description="Approve and publish")
     def approve(self, request, queryset):
-        approved, skipped = 0, 0
+        approved, skipped = [], 0
         for ad in queryset.select_related("owner"):
             if not ad.owner.age_verified:
                 skipped += 1
                 continue
             ad.approve()
-            approved += 1
-        self.message_user(request, f"Approved {approved} ad(s).")
+            approved.append(ad)
+        self.mark_reviewed(approved, request.user)
+        self.message_user(request, f"Approved {len(approved)} ad(s).")
         if skipped:
             self.message_user(
                 request,
@@ -182,12 +252,13 @@ class AdAdmin(admin.ModelAdmin):
 
     @admin.action(description="Reject")
     def reject(self, request, queryset):
-        n = 0
+        ads = []
         for ad in queryset.select_related("owner"):  # one by one so the owner is notified
             ad.status, ad.rejection_reason = Ad.Status.REJECTED, "Does not meet our guidelines."
             ad.save(update_fields=["status", "rejection_reason", "updated_at"])
-            n += 1
-        self.message_user(request, f"Rejected {n} ad(s).")
+            ads.append(ad)
+        self.mark_reviewed(ads, request.user)
+        self.message_user(request, f"Rejected {len(ads)} ad(s).")
 
     @admin.action(description="Pause (hide from site)")
     def pause(self, request, queryset):
@@ -195,6 +266,7 @@ class AdAdmin(admin.ModelAdmin):
 
         ads = list(queryset.exclude(status=Ad.Status.PAUSED).select_related("owner"))
         n = queryset.update(status=Ad.Status.PAUSED)
+        self.mark_reviewed(ads, request.user)
         for ad in ads:
             moderator_paused(ad)
         self.message_user(request, f"Paused {n} ad(s).")
@@ -210,8 +282,34 @@ class ReportImageInline(admin.TabularInline):
         return format_html('<a href="{0}" target="_blank"><img src="{0}" style="height:80px"></a>', obj.image.url) if obj.image else "-"
 
 
+class StatusTabsMixin:
+    """Status tabs with counts above a list (templates/admin/_status_tabs.html); the list opens on DEFAULT_TAB."""
+
+    TAB_FIELD = "status"
+    TABS: list = []  # [(value, label)]; "all" = no filter
+    DEFAULT_TAB = "open"
+
+    def changelist_view(self, request, extra_context=None):
+        from django.db.models import Count
+        param = f"{self.TAB_FIELD}__exact"
+        if not request.GET:
+            return redirect(f"{request.path}?{param}={self.DEFAULT_TAB}")
+        current = request.GET.get(param, "all")
+        if "all" in request.GET:
+            query = request.GET.copy()
+            query.pop("all")
+            request.GET = query
+            current = "all"
+        counts = dict(self.model.objects.values_list(self.TAB_FIELD).annotate(n=Count("id")))
+        counts["all"] = sum(counts.values())
+        tabs = [{"key": k, "label": label, "count": counts.get(k, 0), "active": k == current,
+                 "url": "?all=1" if k == "all" else f"?{param}={k}"} for k, label in self.TABS]
+        return super().changelist_view(request, {**(extra_context or {}), "status_tabs": tabs})
+
+
 @admin.register(Report)
-class ReportAdmin(admin.ModelAdmin):
+class ReportAdmin(StatusTabsMixin, admin.ModelAdmin):
+    TABS = [("open", "Open"), ("resolved", "Resolved"), ("dismissed", "Dismissed"), ("draft", "Not confirmed yet"), ("all", "All")]
     inlines = [ReportImageInline]
     list_display = ["created_at", "urgent", "reason", "ad", "status", "reporter_name", "contact_email"]
     list_filter = ["status", "reason"]
@@ -501,6 +599,25 @@ class IdVerificationAdmin(admin.ModelAdmin):
                        "created_at", "reviewed_at", "reviewed_by"]
     actions = ["approve", "reject"]
 
+    # Tabs above the list (templates/admin/core/idverification/change_list.html). The page opens on "Requested".
+    TABS = [("pending", "Requested"), ("approved", "Verified"), ("rejected", "Rejected"), ("all", "All")]
+
+    def changelist_view(self, request, extra_context=None):
+        from django.db.models import Count
+        if not request.GET:  # always start with the people who are waiting
+            return redirect(f"{request.path}?status__exact=pending")
+        current = request.GET.get("status__exact", "")
+        if "all" in request.GET:  # the "All" tab: our own marker, not a filter Django knows
+            query = request.GET.copy()
+            query.pop("all")
+            request.GET = query
+            current = "all"
+        counts = dict(IdVerification.objects.values_list("status").annotate(n=Count("id")))
+        counts["all"] = sum(counts.values())
+        tabs = [{"key": key, "label": label, "count": counts.get(key, 0), "active": key == current,
+                 "url": "?all=1" if key == "all" else f"?status__exact={key}"} for key, label in self.TABS]
+        return super().changelist_view(request, {**(extra_context or {}), "id_tabs": tabs})
+
     def has_add_permission(self, request):
         return False
 
@@ -766,6 +883,9 @@ class ChoiceOptionAdmin(InUseProtectedAdmin):
     def ad_count(self, obj):
         if obj.group == ChoiceOption.Group.AUDIENCE:
             return Ad.objects.filter(audiences__icontains=f'"{obj.value}"').count()
+        if obj.group == ChoiceOption.Group.SERVICE:
+            # Ticked services are stored on the ad by name: services = [{"name": "Anal", "price": ""}, ...]
+            return Ad.objects.filter(services__icontains=f'"{obj.label}"').count()
         return Ad.objects.filter(**{obj.group: obj.value}).count()
     ad_count.short_description = "Ads"
 
@@ -774,7 +894,8 @@ class ChoiceOptionAdmin(InUseProtectedAdmin):
 
 
 @admin.register(UserReport)
-class UserReportAdmin(admin.ModelAdmin):
+class UserReportAdmin(StatusTabsMixin, admin.ModelAdmin):
+    TABS = [("open", "Open"), ("resolved", "Resolved"), ("dismissed", "Dismissed"), ("all", "All")]
     list_display = ["created_at", "urgent", "reason", "reported", "reporter", "status", "chat"]
     list_filter = ["status", "reason"]
     search_fields = ["message", "reported__email", "reporter__email"]
@@ -807,13 +928,97 @@ class UserReportAdmin(admin.ModelAdmin):
         self.message_user(request, f"Dismissed {queryset.update(status=UserReport.Status.DISMISSED)} report(s).")
 
 
+class ContactReplyInline(admin.TabularInline):
+    """What the team answered (newest last). New answers are written in the 'Reply' box above."""
+
+    model = ContactReply
+    extra = 0
+    max_num = 0
+    can_delete = False
+    fields = ["sent_at", "sent_by", "body", "emailed"]
+    readonly_fields = fields
+    verbose_name_plural = "Replies sent"
+
+
+class ContactMessageForm(forms.ModelForm):
+    reply = forms.CharField(
+        required=False, widget=forms.Textarea(attrs={"rows": 8, "style": "width:min(100%,720px)", "placeholder": "Write your answer – it is e-mailed to the sender when you save."}),
+        help_text="Sent by e-mail to the sender (reply-to: the support address) and kept below under 'Replies sent'. "
+                  "Saving with a reply also marks the message as handled.")
+
+    class Meta:
+        model = ContactMessage
+        fields = ["handled"]
+
+
 @admin.register(ContactMessage)
 class ContactMessageAdmin(admin.ModelAdmin):
-    list_display = ["created_at", "topic", "name", "email", "handled"]
+    form = ContactMessageForm
+    list_display = ["created_at", "topic", "name", "email", "handled", "replies_sent", "last_reply"]
     list_filter = ["handled", "topic"]
     list_editable = ["handled"]
     search_fields = ["name", "email", "message"]
     readonly_fields = ["topic", "name", "email", "message", "user", "created_at"]
+    fields = ["topic", "name", "email", "user", "created_at", "message", "reply", "handled"]
+    inlines = [ContactReplyInline]
+
+    TABS = [("unhandled", "Unhandled"), ("handled", "Handled"), ("all", "All")]
+
+    def changelist_view(self, request, extra_context=None):
+        if not request.GET:  # start with what still needs an answer
+            return redirect(f"{request.path}?handled__exact=0")
+        current = {"0": "unhandled", "1": "handled"}.get(request.GET.get("handled__exact", ""), "all")
+        if "all" in request.GET:
+            query = request.GET.copy()
+            query.pop("all")
+            request.GET = query
+            current = "all"
+        open_n = ContactMessage.objects.filter(handled=False).count()
+        total = ContactMessage.objects.count()
+        counts = {"unhandled": open_n, "handled": total - open_n, "all": total}
+        urls = {"unhandled": "?handled__exact=0", "handled": "?handled__exact=1", "all": "?all=1"}
+        tabs = [{"key": k, "label": label, "count": counts[k], "active": k == current, "url": urls[k]} for k, label in self.TABS]
+        return super().changelist_view(request, {**(extra_context or {}), "status_tabs": tabs})
+
+    def get_queryset(self, request):
+        from django.db.models import Count, Max
+        return super().get_queryset(request).annotate(n_replies=Count("replies"), last_reply_at=Max("replies__sent_at"))
+
+    @admin.display(description="Replies", ordering="n_replies")
+    def replies_sent(self, obj):
+        return obj.n_replies
+
+    @admin.display(description="Last reply", ordering="last_reply_at")
+    def last_reply(self, obj):
+        return obj.last_reply_at.strftime("%d %b %Y %H:%M") if obj.last_reply_at else "–"
+
+    def save_model(self, request, obj, form, change):
+        text = (form.cleaned_data.get("reply") or "").strip()
+        if text:
+            obj.handled = True
+        super().save_model(request, obj, form, change)
+        if text:
+            reply = ContactReply.objects.create(message=obj, body=text, sent_by=request.user)
+            try:
+                send_contact_reply(obj, text)
+                reply.emailed = True
+                reply.save(update_fields=["emailed"])
+                self.message_user(request, f"Your reply was e-mailed to {obj.email}.")
+            except Exception as exc:  # noqa: BLE001 – keep the reply, tell the admin it wasn't sent
+                self.message_user(request, f"The reply is saved, but the e-mail could not be sent: {exc}", messages.ERROR)
+
+
+def send_contact_reply(msg, text: str) -> None:
+    from . import emails
+    lines = [p.strip() for p in text.split("\n\n") if p.strip()] or [text]
+    quoted = (msg.message or "")[:600]
+    emails.send(
+        to=msg.email, user=msg.user, background=False, fail_silently=False,
+        subject=f"Re: {msg.get_topic_display()}",
+        heading=f"Hi {msg.name}",
+        lines=[*lines, f"— You wrote: \u201c{quoted}{'…' if len(msg.message or '') > 600 else ''}\u201d"],
+        note="You can answer this e-mail directly.",
+    )
 
 
 @admin.register(FaqItem)

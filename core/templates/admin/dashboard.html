@@ -122,11 +122,11 @@
 
     {# Sales snapshot #}
     <div class="ea-card">
-      <h2><span><svg class="ic"><use href="#i-money"/></svg>Sales</span><a href="{% url 'admin:sales' %}">Sales overview →</a></h2>
+      <h2><span><svg class="ic"><use href="#i-money"/></svg>Sales</span><span style="display:flex;gap:10px"><a href="{% url 'admin:core_order_changelist' %}">Orders →</a><a href="{% url 'admin:sales' %}">Plans →</a></span></h2>
       <div class="ea-mini">
         {% for t in sales_totals %}<div><span>{{ t.label }}</span><b>{{ t.amount }}</b><small class="ea-muted">{{ t.orders }} orders</small></div>{% endfor %}
       </div>
-      <p class="ea-muted" style="margin:0">Ad plans, First in search, Front page ads, visitor VIP and coin packages – prices and what each sold are on the sales overview.</p>
+      <p class="ea-muted" style="margin:0">Ads plan, VIP plan, coin packages and add-ons (First in search, Front page ad) – prices and what each sold are under Sales → Plans.</p>
     </div>
 
     {# Chat #}
@@ -155,6 +155,140 @@
         </table></div>
         <p class="ea-muted" style="margin:10px 0 0;font-size:.78rem">Message texts are private – open a conversation only when there is a reason (e.g. a report).</p>
       {% else %}<div class="ea-empty">No conversations yet.</div>{% endif %}
+    </div>
+
+    {# This week #}
+    <div class="ea-card ea-wide">
+      <h2><span><svg class="ic"><use href="#i-clock"/></svg>Last 7 days</span></h2>
+      <div class="ea-mini" style="margin:0">
+        <div><span>New ads</span><b>{{ week.new_ads }}</b></div>
+        <div><span>People who posted</span><b>{{ week.posters }}</b></div>
+        <div><span>Ads plans bought</span><b>{{ week.plans_bought }}</b></div>
+        <div><span>VIP bought</span><b>{{ week.vip_bought }}</b></div>
+        <div><span>New reviews</span><b>{{ week.reviews }}</b></div>
+      </div>
+    </div>
+
+    {# Who bought what #}
+    <div class="ea-card ea-wide">
+      <h2><span><svg class="ic"><use href="#i-receipt"/></svg>Who bought what – latest 10</span><a href="{% url 'admin:core_order_changelist' %}?status__exact=paid">All orders →</a></h2>
+      {% if purchases %}
+        <div class="ea-scroll"><table class="ea-table">
+          <thead><tr><th>Who</th><th>Type</th><th>What</th><th>For ad</th><th>Amount</th><th>Paid</th></tr></thead>
+          <tbody>
+          {% for p in purchases %}
+            <tr>
+              <td class="ea-who"><b><a href="{{ p.user.url }}">{{ p.user.name|truncatechars:28 }}</a></b><small>{{ p.user.email|truncatechars:32 }}</small></td>
+              <td><span class="ea-pill t-{{ p.tone }}">{{ p.kind }}</span></td>
+              <td><a href="{{ p.url }}">{{ p.what|truncatechars:34 }}</a>{% if p.addons %}<br><small class="ea-muted">+ {{ p.addons|truncatechars:40 }}</small>{% endif %}</td>
+              <td>{% if p.ad %}<a href="{{ p.ad_url }}">{{ p.ad|truncatechars:30 }}</a>{% else %}<span class="ea-muted">–</span>{% endif %}</td>
+              <td class="ea-nowrap"><b>{{ p.amount }}</b></td>
+              <td class="ea-nowrap" title="{{ p.at|date:'j M Y H:i' }}">{{ p.at|ago }} ago</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="ea-empty">No payments yet.</div>{% endif %}
+    </div>
+
+    {# VIP members #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-gift"/></svg>VIP members (visitors)</span><a href="{% url 'admin:core_user_changelist' %}?is_advertiser__exact=0">All visitors →</a></h2>
+      {% if vip_members %}
+        <div class="ea-scroll"><table class="ea-table">
+          <thead><tr><th>Who</th><th>Plan</th><th>VIP until</th></tr></thead>
+          <tbody>
+          {% for v in vip_members %}
+            <tr>
+              <td class="ea-who"><b><a href="{{ v.url }}">{{ v.name|truncatechars:26 }}</a></b><small>{% if v.country %}{{ v.country.flag }} {{ v.country.name }} · {% endif %}{{ v.email|truncatechars:28 }}</small></td>
+              <td>{{ v.plan|truncatechars:28 }}{% if v.since %}<br><small class="ea-muted">bought {{ v.since|date:"j M Y" }}</small>{% endif %}</td>
+              <td class="ea-nowrap">{{ v.until|date:"j M Y" }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="ea-empty">No VIP members right now.</div>{% endif %}
+    </div>
+
+    {# Latest reviews #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-star"/></svg>Latest reviews</span><a href="{% url 'admin:core_adreview_changelist' %}">All reviews →</a></h2>
+      {% if reviews %}
+        <ul class="ea-feed">
+          {% for r in reviews %}
+            <li><a href="{{ r.url }}">
+              <span class="ico t-amber"><svg class="ic"><use href="#i-star"/></svg></span>
+              <span class="txt"><b>{{ r.stars }} · {{ r.ad|truncatechars:40 }}</b><small>{{ r.user.name }}{% if r.body %} – “{{ r.body|truncatechars:70 }}”{% endif %}{% if r.hidden %} · hidden{% endif %}</small></span>
+              <span class="when">{{ r.at|ago }}</span>
+            </a></li>
+          {% endfor %}
+        </ul>
+      {% else %}<div class="ea-empty">No reviews yet.</div>{% endif %}
+    </div>
+
+    {# Open reports #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-flag"/></svg>Open reports{% if open_reports %} · {{ open_reports|length }}{% endif %}</span>
+        <span style="display:flex;gap:10px"><a href="{% url 'admin:core_report_changelist' %}">Ads →</a><a href="{% url 'admin:core_userreport_changelist' %}">Users →</a></span></h2>
+      {% if open_reports %}
+        <ul class="ea-feed">
+          {% for r in open_reports %}
+            <li><a href="{{ r.url }}">
+              <span class="ico t-red"><svg class="ic"><use href="#i-flag"/></svg></span>
+              <span class="txt"><b>{{ r.type }}: {{ r.about|truncatechars:40 }}</b><small>{{ r.reason }}{% if r.text %} – {{ r.text|truncatechars:60 }}{% endif %}</small></span>
+              <span class="when">{{ r.at|ago }}</span>
+            </a></li>
+          {% endfor %}
+        </ul>
+      {% else %}<div class="ea-empty">No open reports. ✓</div>{% endif %}
+    </div>
+
+    {# Contact messages #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-mail"/></svg>Contact messages</span><a href="{% url 'admin:core_contactmessage_changelist' %}">All messages →</a></h2>
+      {% if contacts %}
+        <ul class="ea-feed">
+          {% for m in contacts %}
+            <li class="{% if not m.handled %}new{% endif %}"><a href="{{ m.url }}">
+              <span class="ico t-blue"><svg class="ic"><use href="#i-mail"/></svg></span>
+              <span class="txt"><b>{{ m.name }} · {{ m.topic }}</b><small>{% if m.handled %}Answered{% if m.replies %} ({{ m.replies }}){% endif %} – {% else %}Not answered – {% endif %}{{ m.text|truncatechars:70 }}</small></span>
+              <span class="when">{{ m.at|ago }}</span>
+            </a></li>
+          {% endfor %}
+        </ul>
+      {% else %}<div class="ea-empty">No messages yet.</div>{% endif %}
+    </div>
+
+    {# Most viewed ads #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-chart"/></svg>Most viewed ads – 7 days</span></h2>
+      {% if top_ads %}
+        <div class="ea-scroll"><table class="ea-table">
+          <thead><tr><th>Ad</th><th>Plan</th><th>Views</th></tr></thead>
+          <tbody>
+          {% for a in top_ads %}
+            <tr><td><a href="{{ a.url }}"><b>{{ a.title|truncatechars:40 }}</b></a><br><small class="ea-muted">{{ a.owner|truncatechars:30 }}</small></td>
+              <td><span class="ea-pill {% if a.tier != 'free' %}t-pink{% else %}t-grey{% endif %}">{{ a.tier|capfirst }}</span></td><td><b>{{ a.views }}</b></td></tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="ea-empty">No views this week yet.</div>{% endif %}
+    </div>
+
+    {# Paid plans ending soon #}
+    <div class="ea-card">
+      <h2><span><svg class="ic"><use href="#i-clock"/></svg>Paid plans ending within 7 days</span></h2>
+      {% if ending %}
+        <div class="ea-scroll"><table class="ea-table">
+          <thead><tr><th>Ad</th><th>Plan</th><th>Ends</th></tr></thead>
+          <tbody>
+          {% for a in ending %}
+            <tr><td><a href="{{ a.url }}"><b>{{ a.title|truncatechars:38 }}</b></a><br><small class="ea-muted"><a href="{{ a.owner.url }}">{{ a.owner.name|truncatechars:28 }}</a></small></td>
+              <td><span class="ea-pill t-pink">{{ a.tier }}</span></td><td class="ea-nowrap">{{ a.until|date:"j M, H:i" }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      {% else %}<div class="ea-empty">No paid plans end this week.</div>{% endif %}
     </div>
 
     {# Creators with ads, by last sign-in #}
@@ -201,13 +335,13 @@
       <h2><span><svg class="ic"><use href="#i-login"/></svg>Recent sign-ins</span><a href="{% url 'admin:core_loginevent_changelist' %}">Login history →</a></h2>
       {% if logins %}
         <div class="ea-scroll"><table class="ea-table">
-          <thead><tr><th>Who</th><th>When</th><th>How</th><th>Device</th><th>Country</th></tr></thead>
+          <thead><tr><th>Who</th><th>When</th><th>How</th><th>Device</th><th>IP</th><th>Country</th></tr></thead>
           <tbody>
           {% for e in logins %}
             <tr>
               <td><a href="{{ e.url }}"><b>{{ e.user|truncatechars:36 }}</b></a> {% if e.advertiser %}<span class="ea-pill t-pink">Advertiser</span>{% endif %}</td>
               <td class="ea-nowrap" title="{{ e.at|date:'j M Y H:i:s' }}">{{ e.at|date:"j M, H:i" }} <span class="ea-muted">({{ e.at|ago }} ago)</span></td>
-              <td>{{ e.method }}</td><td>{{ e.device|default:"–" }}</td>
+              <td>{{ e.method }}</td><td>{{ e.device|default:"–" }}</td><td class="ea-nowrap">{{ e.ip|default:"–" }}</td>
               <td class="ea-nowrap">{% if e.country %}{{ e.country.flag }} {{ e.country.name }}{% else %}–{% endif %}</td>
             </tr>
           {% endfor %}

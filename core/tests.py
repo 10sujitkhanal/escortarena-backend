@@ -2116,7 +2116,8 @@ class AdminDashboardTests(Base):
         id_entry = next(m for a in res.context["available_apps"] for m in a["models"] if m["object_name"] == "IdVerification")
         self.assertIn("(1)", id_entry["name"])  # waiting requests counted in the menu
         for url in ("/admin/core/user/", f"/admin/core/user/{self.adv.pk}/change/", "/admin/core/loginevent/",
-                    "/admin/sales/", "/admin/core/idverification/", "/admin/core/idverification/?history=again"):
+                    "/admin/sales/", "/admin/core/idverification/?status__exact=pending",
+                    "/admin/core/idverification/?history=again"):
             self.assertEqual(web.get(url).status_code, 200, url)
 
     def test_notifications_and_resubmitted_verification(self):
@@ -2148,6 +2149,115 @@ class AdminDashboardTests(Base):
         dash = web.get("/admin/")
         self.assertContains(dash, "Sent again – rejected once before")
         self.assertContains(dash, "Quick access")
-        sales = web.get("/admin/sales/")
-        self.assertContains(sales, "Plans for ads")
-        self.assertContains(sales, "Coin packages")
+        self.assertContains(web.get("/admin/sales/"), "Ads plan – Free, Standard, Premium, VIP")
+        self.assertContains(web.get("/admin/sales/?tab=vip"), "VIP plan – visitor membership")
+        coins = web.get("/admin/sales/?tab=coins")
+        self.assertContains(coins, "Add a package")
+        self.assertNotContains(coins, "Ads plan – Free")  # one list per tab
+        self.assertContains(web.get("/admin/sales/?tab=addons"), "Add-ons – First in search")
+
+        # The bell clears its count when opened (background request).
+        IdVerification.objects.create(user=newbie, document_type="passport", full_name="New One", date_of_birth="1990-01-01")
+        self.assertGreater(web.get("/admin/").context["notif_new"], 0)
+        res = web.post("/admin/notifications/seen/", HTTP_X_REQUESTED_WITH="fetch")
+        self.assertEqual(res.status_code, 204)
+        self.assertEqual(web.get("/admin/").context["notif_new"], 0)
+
+        # ID verifications open on "Requested", with counts per tab.
+        res = web.get("/admin/core/idverification/")
+        self.assertRedirects(res, "/admin/core/idverification/?status__exact=pending", fetch_redirect_response=False)
+        page = web.get("/admin/core/idverification/?status__exact=pending")
+        tabs = {t["key"]: t["count"] for t in page.context["id_tabs"]}
+        self.assertEqual(tabs, {"pending": 2, "approved": 0, "rejected": 1, "all": 3})
+        self.assertEqual(len(page.context["cl"].result_list), 2)
+        everyone = web.get("/admin/core/idverification/?all=1")
+        self.assertEqual(len(everyone.context["cl"].result_list), 3)
+        self.assertTrue(next(t for t in everyone.context["id_tabs"] if t["key"] == "all")["active"])
+
+
+class AdminModerationTests(Base):
+    def setUp(self):
+        super().setUp()
+        from django.test import Client
+        self.staff = User.objects.create_superuser("boss@test.dk", "pw-Strong-123", display_name="Boss")
+        self.web = Client()
+        self.web.force_login(self.staff)
+
+    def test_options_page_with_service_options(self):
+        from core.models import ChoiceOption
+        ChoiceOption.objects.create(group="service", value="s99", label="Massage")
+        self.make_ad(services=[{"name": "Massage", "price": ""}])
+        res = self.web.get("/admin/core/choiceoption/?group__exact=service")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.context["cl"].model_admin.ad_count(ChoiceOption.objects.get(value="s99")), 1)
+
+    def test_ad_review_is_recorded_and_filtered(self):
+        ad = self.make_ad(status="pending")
+        res = self.web.post("/admin/core/ad/", {"action": "approve", "_selected_action": [ad.pk]})
+        self.assertEqual(res.status_code, 302)
+        ad.refresh_from_db()
+        self.assertEqual((ad.status, ad.reviewed_by_id), ("active", self.staff.pk))
+        self.assertIsNotNone(ad.reviewed_at)
+        mine = self.web.get(f"/admin/core/ad/?reviewer={self.staff.pk}")
+        self.assertEqual([a.pk for a in mine.context["cl"].result_list], [ad.pk])
+        self.assertEqual(len(self.web.get("/admin/core/ad/?review=waiting").context["cl"].result_list), 0)
+        tabs = {t["key"]: t["count"] for t in self.web.get("/admin/core/ad/").context["status_tabs"]}
+        self.assertEqual((tabs["active"], tabs["all"]), (1, 1))
+
+    def test_login_stores_ip_and_country_sent_by_the_website(self):
+        from core.models import LoginEvent
+        self.client.post("/api/auth/login", {"email": "adv@test.dk", "password": "pw-Strong-123",
+                                             "client_ip": "203.0.113.7", "client_country": "dk"}, format="json")
+        e = LoginEvent.objects.get(user=self.adv)
+        self.assertEqual((e.ip, e.country), ("203.0.113.7", "DK"))
+        self.client.post("/api/auth/login", {"email": "adv@test.dk", "password": "pw-Strong-123",
+                                             "client_ip": "not-an-ip", "client_country": "Denmark"}, format="json")
+        e = LoginEvent.objects.filter(user=self.adv).first()
+        self.assertEqual((e.ip, e.country), (None, ""))  # bad values are dropped, the login still works
+
+    def test_contact_reply_is_emailed_and_kept(self):
+        from django.core import mail as django_mail
+
+        from core.models import ContactMessage, ContactReply
+        msg = ContactMessage.objects.create(name="Lise", email="lise@example.com", message="How do I pay?")
+        self.assertRedirects(self.web.get("/admin/core/contactmessage/"), "/admin/core/contactmessage/?handled__exact=0",
+                             fetch_redirect_response=False)
+        page = self.web.get("/admin/core/contactmessage/?handled__exact=0")
+        self.assertEqual({t["key"]: t["count"] for t in page.context["status_tabs"]}, {"unhandled": 1, "handled": 0, "all": 1})
+        res = self.web.post(f"/admin/core/contactmessage/{msg.pk}/change/", {
+            "reply": "Hi Lise,\n\nYou can pay by card.", "handled": "",
+            "replies-TOTAL_FORMS": "0", "replies-INITIAL_FORMS": "0", "replies-MIN_NUM_FORMS": "0", "replies-MAX_NUM_FORMS": "0"})
+        self.assertEqual(res.status_code, 302, getattr(res, "context", None) and res.context["adminform"].form.errors)
+        msg.refresh_from_db()
+        self.assertTrue(msg.handled)
+        r = ContactReply.objects.get(message=msg)
+        self.assertEqual((r.sent_by_id, r.emailed), (self.staff.pk, True))
+        self.assertEqual(django_mail.outbox[-1].to, ["lise@example.com"])
+        self.assertIn("You can pay by card.", django_mail.outbox[-1].body)
+
+    def test_report_tabs_open_first(self):
+        from core.models import Report
+        ad = self.make_ad()
+        Report.objects.create(ad=ad, reason="fake", status="open")
+        Report.objects.create(ad=ad, reason="scam", status="resolved")
+        self.assertRedirects(self.web.get("/admin/core/report/"), "/admin/core/report/?status__exact=open",
+                             fetch_redirect_response=False)
+        page = self.web.get("/admin/core/report/?status__exact=open")
+        tabs = {t["key"]: t["count"] for t in page.context["status_tabs"]}
+        self.assertEqual((tabs["open"], tabs["resolved"], tabs["all"]), (1, 1, 2))
+        self.assertEqual(self.web.get("/admin/core/userreport/").status_code, 302)
+
+    def test_dashboard_insights(self):
+        from core.models import AdReview, Order, Product
+        ad = self.make_ad(title="Reviewed ad")
+        ad.approve()
+        AdReview.objects.create(ad=ad, user=self.visitor, rating=4, body="Lovely")
+        vip = Product.objects.create(kind="membership", code="vip-1w", name="VIP – 1 week", days=7, price=499)
+        Order.objects.create(user=self.visitor, product=vip, product_name=vip.name, tier="free", days=7, amount=499,
+                             currency="USD", status="paid", paid_at=timezone.now())
+        self.visitor.vip_until = timezone.now() + timedelta(days=7)
+        self.visitor.save()
+        res = self.web.get("/admin/")
+        for text in ("Who bought what", "VIP – 1 week", "VIP members", "Latest reviews", "Reviewed ad", "Lovely",
+                     "Open reports", "Contact messages", "Most viewed ads", "Paid plans ending", "Last 7 days"):
+            self.assertContains(res, text)
