@@ -343,9 +343,13 @@ class RealtimeTicketView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from .realtime import make_ticket
+        from .membership import can_go_live
+        from .realtime import TICKET_MAX_AGE, make_ticket
 
-        return Response({"ticket": make_ticket(request.user.pk), "url": settings.REALTIME_WS_URL})
+        if not can_go_live(request.user):
+            raise PermissionDenied({"detail": "Real-time messages are for VIP members.", "vip_required": True})
+        return Response({"ticket": make_ticket(request.user.pk), "url": settings.REALTIME_WS_URL,
+                         "expires_in": TICKET_MAX_AGE})
 
 
 class UnreadCountView(APIView):

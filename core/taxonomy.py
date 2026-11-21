@@ -9,7 +9,6 @@ from django.db.models.signals import post_delete, post_save
 
 from .models import AdCategory, AdPlace, AdRegion, ChoiceOption, Country
 
-CACHE_KEY = "taxonomy:v1"
 OPTION_GROUPS = [g for g, _ in ChoiceOption.Group.choices]
 
 
@@ -50,12 +49,27 @@ def _build():
     }
 
 
+VERSION_KEY = "taxonomy:version"
+_local: dict = {"version": None, "data": None, "checked": 0.0}
+
+
 def lists() -> dict:
-    data = cache.get(CACHE_KEY)
-    if data is None:
-        data = _build()
-        cache.set(CACHE_KEY, data, 10)  # short: other server processes pick up admin edits within seconds
-    return data
+    """Each process keeps a ready copy in memory (no unpickling per label); it rebuilds only when the shared
+    version number changes (an admin edit, see _clear) – checked at most once a second."""
+    import time
+
+    now = time.monotonic()
+    if _local["data"] is not None and now - _local["checked"] < 1:
+        return _local["data"]
+    version = cache.get(VERSION_KEY)
+    if version is None:
+        cache.add(VERSION_KEY, time.time_ns(), None)  # unique start, so a cleared cache never reuses an old number
+        version = cache.get(VERSION_KEY)
+    if _local["data"] is None or _local["version"] != version:
+        _local["data"] = _build()
+        _local["version"] = version
+    _local["checked"] = now
+    return _local["data"]
 
 
 def label(kind: str, value: str) -> str:
@@ -125,7 +139,13 @@ def regions_in_country(code: str) -> list[str]:
 
 
 def _clear(**kwargs):
-    cache.delete(CACHE_KEY)
+    import time
+
+    _local["data"] = None  # this process rebuilds at once; the others see the new version within a second
+    try:
+        cache.incr(VERSION_KEY)
+    except ValueError:  # no version yet
+        cache.set(VERSION_KEY, time.time_ns(), None)
 
 
 for _model in (Country, AdRegion, AdPlace, AdCategory, ChoiceOption):

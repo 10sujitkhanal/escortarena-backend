@@ -80,7 +80,7 @@ def can_type_in(uid, conversation_id) -> int | None:
 # ---------------------------------------------------------------------------
 
 TICKET_SALT = "realtime.ticket"
-TICKET_MAX_AGE = 120  # seconds; only needed for the handshake
+TICKET_MAX_AGE = 30 * 60  # seconds; the browser reuses one ticket for reconnects within this time
 
 
 def make_ticket(user_id: int) -> str:
@@ -131,6 +131,11 @@ class MessagesConsumer(AsyncJsonWebsocketConsumer):
         user = self.scope.get("user")
         if not user or not user.is_authenticated:
             await self.close(code=4401)
+            return
+        from .membership import can_go_live
+
+        if not can_go_live(user):
+            await self.close(code=4403)  # free visitors: no real time (the site shows the VIP offer)
             return
         self.uid = user.pk
         self.group_name = group(user.pk)

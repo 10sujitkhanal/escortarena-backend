@@ -886,6 +886,32 @@ class RealtimeTests(APITransactionTestCase):
         self.assertFalse(connected)
 
 
+    async def test_free_visitor_gets_no_live_connection(self):
+        from asgiref.sync import sync_to_async
+        from channels.testing import WebsocketCommunicator
+
+        from config.asgi import application
+        from .models import User
+        from .realtime import make_ticket
+
+        free = await sync_to_async(User.objects.create_user)("free@test.dk", "pw-Strong-123")
+        await sync_to_async(self.client.force_authenticate)(free)
+        res = await sync_to_async(self.client.get)("/api/realtime/ticket")
+        self.assertEqual((res.status_code, str(res.data.get("vip_required"))), (403, "True"))
+        me = (await sync_to_async(self.client.get)("/api/auth/me")).data
+        self.assertEqual((me["live_updates"], me["unread_messages"], me["unread_notifications"]), (False, 0, me["unread_notifications"]))
+
+        ws = WebsocketCommunicator(application, f"/ws/messages/?ticket={make_ticket(free.pk)}",
+                                   headers=[(b"origin", b"http://localhost:3100")])
+        connected, code = await ws.connect()
+        self.assertFalse(connected)
+        self.assertEqual(code, 4403)
+
+        await sync_to_async(self.client.force_authenticate)(self.visitor)  # VIP
+        self.assertTrue((await sync_to_async(self.client.get)("/api/auth/me")).data["live_updates"])
+        self.assertEqual((await sync_to_async(self.client.get)("/api/realtime/ticket")).status_code, 200)
+
+
 class FavoritesCommentsProfileTests(Base):
     def setUp(self):
         super().setUp()

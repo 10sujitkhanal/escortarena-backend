@@ -15,6 +15,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.text import slugify
+from django.views.decorators.cache import cache_control
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django_filters import rest_framework as df
 from rest_framework import generics, mixins, permissions, status, viewsets
@@ -93,6 +94,7 @@ def public_cached(seconds: int = 60):
     return deco
 
 
+@cache_control(public=True, max_age=60)  # browsers reuse it; admin edits show within 1 min
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def site(request):
@@ -133,6 +135,7 @@ def meta_areas(request):
     return Response(editor_areas(codes) if codes else {"regions": [], "places": []})
 
 
+@cache_control(public=True, max_age=300)  # browsers reuse it; admin edits show within 5 min
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def meta(request):
@@ -193,7 +196,25 @@ class MeView(APIView):
     def get(self, request):
         if not request.user.is_authenticated:
             return Response(None)
-        return Response(s.UserSerializer(request.user).data)
+        from .membership import can_go_live
+        from .messaging import unread_total
+        from .notifications import unread_count
+
+        from .economy import active_offers
+        from .models import Favorite
+
+        u = request.user
+        # Everything the site needs once per visit rides along (badges, live flag, which hearts are filled,
+        # offer count), so a page load makes one request here instead of seven.
+        return Response({**s.UserSerializer(u).data, "live_updates": can_go_live(u),
+                         "unread_messages": unread_total(u), "unread_notifications": unread_count(u),
+                         "hearts": {
+                             "ads": [str(i) for i in Ad.objects.live().filter(hearts__user=u).values_list("id", flat=True)],
+                             "pictures": list(PictureHeart.objects.filter(user=u).values_list("picture_id", flat=True)),
+                             "topics": list(TopicHeart.objects.filter(user=u).values_list("topic_id", flat=True)),
+                             "favorites": [str(i) for i in Favorite.objects.filter(user=u).values_list("ad_id", flat=True)],
+                         },
+                         "offer_count": active_offers().count()})
 
     def patch(self, request):
         if not request.user.is_authenticated:

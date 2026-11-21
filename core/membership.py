@@ -37,6 +37,11 @@ def is_vip(user) -> bool:
     return bool(user and getattr(user, "is_authenticated", False) and user.is_vip)
 
 
+def can_go_live(user) -> bool:
+    """Real-time messages and notifications (the WebSocket): VIP members and advertisers."""
+    return is_vip(user) or bool(getattr(user, "is_advertiser", False))
+
+
 def require_vip(user, what: str) -> None:
     """Stop free visitors. The answer carries `vip_required` so the site can show the VIP offer."""
     if not is_vip(user):
