@@ -852,8 +852,8 @@ class Order(models.Model):
 
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.CREATED)
     gateway = models.CharField(max_length=20, default="paymentwings")
-    gateway_payment_id = models.CharField(max_length=40, blank=True, db_index=True)
-    payment_url = models.URLField(max_length=500, blank=True)
+    gateway_payment_id = models.CharField(max_length=255, blank=True, db_index=True)
+    payment_url = models.URLField(max_length=2000, blank=True)
     card_brand = models.CharField(max_length=30, blank=True)
     last_gateway_state = models.JSONField(default=dict, blank=True)
     applied_at = models.DateTimeField(null=True, blank=True)
