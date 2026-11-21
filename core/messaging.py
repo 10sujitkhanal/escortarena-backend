@@ -337,6 +337,17 @@ class ConversationListView(APIView):
         return Response([conversation_summary(c, request.user) for c in qs[:100]])
 
 
+class RealtimeTicketView(APIView):
+    """A short-lived ticket plus the address for the chat WebSocket (see realtime.TicketAuthMiddleware)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .realtime import make_ticket
+
+        return Response({"ticket": make_ticket(request.user.pk), "url": settings.REALTIME_WS_URL})
+
+
 class UnreadCountView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

@@ -224,6 +224,10 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(
     FRONTEND_ORIGINS + env_list("CSRF_EXTRA_ORIGINS", "https://api.escortarea.com")))
 
+# Where browsers open the chat WebSocket, e.g. wss://api.escortarea.com (Vercel can't proxy WebSockets).
+# Empty = the site's own host (local dev, or a server that proxies /ws itself).
+REALTIME_WS_URL = os.environ.get("REALTIME_WS_URL", "").rstrip("/")
+
 # Login lives only in the HttpOnly "session_id" cookie (the browser never sees a token in JS/localStorage).
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "session_id")
 SESSION_COOKIE_AGE = int(os.environ.get("SESSION_COOKIE_AGE", 14 * 24 * 3600))  # 14 days

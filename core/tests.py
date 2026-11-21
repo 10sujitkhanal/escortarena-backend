@@ -848,6 +848,8 @@ class RealtimeTests(APITransactionTestCase):
         ws.scope["user"] = self.adv
         connected, _ = await ws.connect()
         self.assertTrue(connected)
+        counts = await ws.receive_json_from(timeout=2)
+        self.assertEqual(counts, {"type": "counts", "unread_total": 0, "unread_notifications": counts["unread_notifications"]})
 
         await sync_to_async(post_message)(conv, self.visitor, "Hello live")  # autocommit: pushes right away
 
@@ -855,6 +857,33 @@ class RealtimeTests(APITransactionTestCase):
         self.assertEqual((event["conversation_id"], event["message"]["body"], event["message"]["mine"]),
                          (conv.pk, "Hello live", False))
         await ws.disconnect()
+
+    async def test_ticket_connects_from_site_origin(self):
+        from asgiref.sync import sync_to_async
+        from channels.testing import WebsocketCommunicator
+
+        from config.asgi import application
+        from .realtime import make_ticket
+
+        await sync_to_async(self.client.force_authenticate)(self.adv)
+        res = await sync_to_async(self.client.get)("/api/realtime/ticket")
+        self.assertEqual(res.status_code, 200)
+        ticket = res.data["ticket"]
+        site = [(b"origin", b"http://localhost:3100")]
+
+        ws = WebsocketCommunicator(application, f"/ws/messages/?ticket={ticket}", headers=site)
+        connected, _ = await ws.connect()
+        self.assertTrue(connected)
+        await ws.disconnect()
+
+        bad = WebsocketCommunicator(application, "/ws/messages/?ticket=forged", headers=site)
+        connected, code = await bad.connect()
+        self.assertFalse(connected)
+
+        evil = WebsocketCommunicator(application, f"/ws/messages/?ticket={make_ticket(self.adv.pk)}",
+                                     headers=[(b"origin", b"https://evil.example")])
+        connected, _ = await evil.connect()
+        self.assertFalse(connected)
 
 
 class FavoritesCommentsProfileTests(Base):
@@ -1514,6 +1543,7 @@ class RealtimeMessagingTests(APITransactionTestCase):
         async def scenario():
             adv, vis = connect(self.adv), connect(self.visitor)
             self.assertTrue((await adv.connect())[0])
+            self.assertEqual((await adv.receive_json_from(timeout=2))["type"], "counts")
             # Visitor writes first → advertiser gets the message, the conversation row and unread total 1.
             res = await database_sync_to_async(api)(self.visitor, "post", f"/api/ads/{ad.id}/message", {"body": "Hi!"})
             cid = res.data["conversation_id"]
@@ -1524,6 +1554,7 @@ class RealtimeMessagingTests(APITransactionTestCase):
 
             # Visitor comes online → advertiser is told.
             self.assertTrue((await vis.connect())[0])
+            self.assertEqual((await vis.receive_json_from(timeout=2))["type"], "counts")
             event = await adv.receive_json_from(timeout=2)
             self.assertEqual((event["type"], event["online"]), ("presence", True))
             self.assertTrue(await database_sync_to_async(is_online)(self.visitor.pk))

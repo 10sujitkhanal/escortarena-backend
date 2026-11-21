@@ -63,6 +63,7 @@ urlpatterns = [
     path("favorites", views.MyFavoritesView.as_view()),
     path("advertisers/<int:pk>", views.advertiser_profile),
     path("conversations", messaging.ConversationListView.as_view()),
+    path("realtime/ticket", messaging.RealtimeTicketView.as_view()),
     path("conversations/unread", messaging.UnreadCountView.as_view()),
     path("notifications", notifications.NotificationListView.as_view()),
     path("notifications/unread", notifications.NotificationCountView.as_view()),

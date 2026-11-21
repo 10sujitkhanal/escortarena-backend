@@ -21,6 +21,7 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
+from django.core import signing
 from django.core.cache import cache
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models import Q
@@ -73,6 +74,58 @@ def can_type_in(uid, conversation_id) -> int | None:
     return conv.advertiser_id if conv.visitor_id == uid else conv.visitor_id
 
 
+# ---------------------------------------------------------------------------
+# Tickets: the live site runs on Vercel, which can't pass WebSockets through. The browser fetches a
+# short-lived ticket through /api (session cookie), then connects straight to the API host with it.
+# ---------------------------------------------------------------------------
+
+TICKET_SALT = "realtime.ticket"
+TICKET_MAX_AGE = 120  # seconds; only needed for the handshake
+
+
+def make_ticket(user_id: int) -> str:
+    return signing.dumps(user_id, salt=TICKET_SALT)
+
+
+def read_ticket(ticket: str) -> int | None:
+    try:
+        return int(signing.loads(ticket, salt=TICKET_SALT, max_age=TICKET_MAX_AGE))
+    except (signing.BadSignature, TypeError, ValueError):
+        return None
+
+
+@database_sync_to_async
+def _active_user(uid):
+    from .models import User
+
+    return User.objects.filter(pk=uid, is_active=True).first()
+
+
+def _counts(user) -> dict:
+    from .messaging import unread_total
+    from .notifications import unread_count
+
+    return {"unread_total": unread_total(user), "unread_notifications": unread_count(user)}
+
+
+class TicketAuthMiddleware:
+    """?ticket=… on the socket URL logs the socket in (used when the session cookie isn't sent)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        from urllib.parse import parse_qs
+
+        ticket = (parse_qs(scope.get("query_string", b"").decode()).get("ticket") or [""])[0]
+        uid = read_ticket(ticket) if ticket else None
+        if uid:
+            user = await _active_user(uid)
+            if user:
+                scope = dict(scope, user=user)
+        return await self.app(scope, receive, send)
+
+
 class MessagesConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         user = self.scope.get("user")
@@ -84,6 +137,8 @@ class MessagesConsumer(AsyncJsonWebsocketConsumer):
         self.typing_ok: dict[int, int | None] = {}  # conversation id → other user id (cached checks)
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        # Both badge counts straight away, so the site needs no separate unread requests while connected.
+        await self.send_json({"type": "counts", **await database_sync_to_async(_counts)(user)})
         before, _ = await database_sync_to_async(_change_connections)(self.uid, +1)
         if before == 0:
             await self._announce(True)

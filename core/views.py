@@ -66,6 +66,33 @@ def choices(enum):
 DEPLOYED_AT = timezone.now()
 
 
+def public_cached(seconds: int = 60):
+    """Cache a public, user-independent GET answer per URL (server cache + browser Cache-Control)."""
+    import hashlib
+    from functools import wraps
+
+    from django.core.cache import cache
+
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(self, request, *args, **kwargs):
+            key = "pub:" + hashlib.sha256(request.get_full_path().encode()).hexdigest()[:40]
+            data = cache.get(key)
+            if data is None:
+                res = fn(self, request, *args, **kwargs)
+                if res.status_code != 200:
+                    return res
+                data = res.data
+                cache.set(key, data, seconds)
+            res = Response(data)
+            res["Cache-Control"] = f"public, max-age={seconds}"
+            return res
+
+        return wrapper
+
+    return deco
+
+
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def site(request):
@@ -508,6 +535,7 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(data)
 
     @action(detail=False)
+    @public_cached(120)
     def menu(self, request):
         """Header menus (Women, Men, Trans, Clinics …): live ads per area in one country, ?country=DK.
         {"gender": {"female": {"copenhagen": 120, …}}, "category": {"clinic": {…}}, "labels": {slug: name}}."""
@@ -528,9 +556,11 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
                         by_category[c][r] += 1
         used = {r for d in (*by_gender.values(), *by_category.values()) for r in d}
         labels = dict(AdRegion.objects.filter(slug__in=used).values_list("slug", "name"))
-        return Response({"country": code, "gender": by_gender, "category": by_category, "labels": labels})
+        return Response({"country": code, "gender": {k: dict(v) for k, v in by_gender.items()},
+                         "category": {k: dict(v) for k, v in by_category.items()}, "labels": labels})
 
     @action(detail=False)
+    @public_cached(60)
     def map(self, request):
         """Ads as pins for the map: ?country=DK. Each ad sits near its region's centre (spread a little so
         pins don't stack), plus live-ad counts per country for the zoomed-out world view."""
