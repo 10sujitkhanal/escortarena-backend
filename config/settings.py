@@ -239,7 +239,16 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# Payments (PaymentWings – app.paymentwings.com → Settings → API). Without keys, DEBUG builds use a fake local gateway.
+# Payments. Stripe is used when STRIPE_SECRET_KEY is set (PAYMENT_PROVIDER=paymentwings switches back).
+# Stripe webhook: Dashboard → Developers → Webhooks → <PUBLIC_API_URL>/api/payments/stripe/webhook,
+# events checkout.session.completed / async_payment_succeeded / async_payment_failed / expired; its signing secret → STRIPE_WEBHOOK_SECRET.
+PAYMENT_PROVIDER = os.environ.get("PAYMENT_PROVIDER", "").strip().lower()
+STRIPE_PUBLIC_KEY = os.environ.get("STRIPE_PUBLIC_KEY", "")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+if len(sys.argv) > 1 and sys.argv[1] == "test":
+    STRIPE_PUBLIC_KEY = STRIPE_SECRET_KEY = STRIPE_WEBHOOK_SECRET = PAYMENT_PROVIDER = ""  # tests never reach real Stripe
+# PaymentWings – app.paymentwings.com → Settings → API). Without keys, DEBUG builds use a fake local gateway.
 # Sandbox keys run in test mode on the same URL.
 PAYMENTWINGS_PUBLIC_KEY = os.environ.get("PAYMENTWINGS_PUBLIC_KEY", "")
 PAYMENTWINGS_PRIVATE_KEY = os.environ.get("PAYMENTWINGS_PRIVATE_KEY", "")

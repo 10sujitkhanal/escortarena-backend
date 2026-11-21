@@ -95,20 +95,6 @@ def build(now=None) -> dict:
          "sub": f"{paid.count()} orders · {SiteSettings.load().currency}", "url": _list("order", "status__exact=paid")},
     ]
 
-    alerts = [
-        {"label": "ID verifications waiting", "count": pending_ids.count(), "url": _list("idverification", "status__exact=pending"),
-         "tone": "hot"},
-        {"label": "Ads waiting for approval", "count": Ad.objects.filter(status=Ad.Status.PENDING).count(),
-         "url": _list("ad", "status__exact=pending"), "tone": "warn", "hide": not review_ads},
-        {"label": "Open ad reports", "count": Report.objects.filter(status=Report.Status.OPEN).count(),
-         "url": _list("report", "status__exact=open"), "tone": "warn"},
-        {"label": "Open user reports", "count": UserReport.objects.filter(status=UserReport.Status.OPEN).count(),
-         "url": _list("userreport", "status__exact=open"), "tone": "warn"},
-        {"label": "Unanswered contact messages", "count": ContactMessage.objects.filter(handled=False).count(),
-         "url": _list("contactmessage", "handled__exact=0"), "tone": "info"},
-    ]
-    alerts = [a for a in alerts if not a.get("hide")]
-
     # Sign-ups per day (users and advertisers) for the little chart.
     start = timezone.localdate(now) - timedelta(days=CHART_DAYS - 1)
     joined = users.filter(date_joined__date__gte=start).values_list("date_joined", "is_advertiser")
@@ -156,7 +142,6 @@ def build(now=None) -> dict:
         **extra,
         "quick": quick,
         "stats": stats,
-        "alerts": alerts,
         "verifications": [
             {"url": _link("idverification", v.pk), "name": v.full_name or v.user.display_name, "email": v.user.email,
              "user_url": _link("user", v.user_id), "type": v.get_document_type_display(), "at": v.created_at,

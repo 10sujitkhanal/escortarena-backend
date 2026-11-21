@@ -1,4 +1,10 @@
-"""Payments: PaymentWings (https://paymentwings.com/docs/) plus a fake gateway for local development.
+"""Payments: Stripe Checkout (active when STRIPE_SECRET_KEY is set), PaymentWings, and a fake gateway for local development.
+
+Stripe: we create a Checkout Session; the browser pays on Stripe's hosted page. The webhook
+(/api/payments/stripe/webhook, signed with STRIPE_WEBHOOK_SECRET) and the return page both re-read the
+session from Stripe, so a paid order is never taken from the browser's word. Refunds go through the Stripe API.
+
+PaymentWings (kept for later, used when PAYMENT_PROVIDER=paymentwings):
 
 Flow
 1. A user picks a product -> we create an Order and a PaymentWings payment
@@ -17,7 +23,9 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -50,6 +58,7 @@ def to_minor(value) -> int | None:
 
 class PaymentWingsGateway:
     name = "paymentwings"
+    webhook_path = "/api/payments/paymentwings/webhook"
 
     def __init__(self, public_key: str, private_key: str, webhook_key: str, base_url: str):
         self.public_key = public_key
@@ -120,10 +129,104 @@ class PaymentWingsGateway:
         return hmac.compare_digest(expected, str(signature).lower())
 
 
+class StripeGateway:
+    """Stripe Checkout Sessions over the REST API (no SDK needed)."""
+
+    name = "stripe"
+    webhook_path = "/api/payments/stripe/webhook"
+    base_url = "https://api.stripe.com"
+
+    def __init__(self, secret_key: str, webhook_secret: str):
+        self.secret_key = secret_key
+        self.webhook_secret = webhook_secret
+
+    def _request(self, method: str, path: str, params: dict | None = None) -> dict:
+        data = urllib.parse.urlencode(params or {}).encode() if method == "POST" else None
+        url = f"{self.base_url}{path}"
+        if method == "GET" and params:
+            url += "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Authorization", f"Bearer {self.secret_key}")
+        req.add_header("Stripe-Version", "2024-06-20")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                message = json.loads(exc.read() or b"{}").get("error", {}).get("message", "")
+            except ValueError:
+                message = ""
+            log.warning("Stripe %s %s failed: %s %s", method, path, exc.code, message)
+            raise PaymentError(message or f"Stripe returned {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise PaymentError("Could not reach Stripe") from exc
+        except ValueError as exc:
+            raise PaymentError("Unexpected answer from Stripe") from exc
+
+    def create_payment_link(self, order: Order, continue_url: str, cancel_url: str, callback_url: str) -> tuple[str, str]:
+        session = self._request("POST", "/v1/checkout/sessions", {
+            "mode": "payment",
+            "line_items[0][quantity]": 1,
+            "line_items[0][price_data][currency]": order.currency.lower(),
+            "line_items[0][price_data][unit_amount]": order.amount,
+            "line_items[0][price_data][product_data][name]": order.product_name[:250] or "Order",
+            "customer_email": order.user.email,
+            "client_reference_id": order.order_id,
+            "metadata[order_id]": order.order_id,
+            "payment_intent_data[metadata][order_id]": order.order_id,
+            "success_url": continue_url,
+            "cancel_url": cancel_url,
+        })
+        if not (session.get("id") and session.get("url")):
+            raise PaymentError("Could not start the payment.")
+        return session["id"], session["url"]
+
+    def fetch(self, payment_id: str) -> dict:
+        s = self._request("GET", f"/v1/checkout/sessions/{payment_id}",
+                          {"expand[]": "payment_intent.latest_charge"})
+        paid = s.get("payment_status") in ("paid", "no_payment_required")
+        status = s.get("status") or "open"
+        intent = s.get("payment_intent") if isinstance(s.get("payment_intent"), dict) else {}
+        charge = intent.get("latest_charge") if isinstance(intent.get("latest_charge"), dict) else {}
+        card = (charge.get("payment_method_details") or {}).get("card") or {}
+        return {
+            "id": s.get("id") or payment_id,
+            "accepted": paid,
+            "state": "paid" if paid else ("expired" if status == "expired" else "pending"),
+            "currency": s.get("currency") or None,
+            "paid_amount": s.get("amount_total"),
+            "order_id": s.get("client_reference_id") or None,
+            "metadata": {"brand": card.get("brand") or ""},
+            "source": "stripe",
+        }
+
+    def refund(self, payment_id: str, amount: int) -> dict:
+        s = self._request("GET", f"/v1/checkout/sessions/{payment_id}")
+        intent = s.get("payment_intent")
+        intent = intent.get("id") if isinstance(intent, dict) else intent
+        if not intent:
+            raise PaymentError("Stripe has no payment for this order.")
+        refund = self._request("POST", "/v1/refunds", {"payment_intent": intent, "amount": amount})
+        return {"accepted": refund.get("status") in ("succeeded", "pending"), "refund_id": refund.get("id")}
+
+    def verify_webhook(self, payload: bytes, header: str, tolerance: int = 300) -> bool:
+        """Stripe-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "t.payload" with the endpoint secret>."""
+        if not (self.webhook_secret and payload and header):
+            return False
+        parts = [p.split("=", 1) for p in header.split(",") if "=" in p]
+        stamp = next((v for k, v in parts if k == "t"), "")
+        sigs = [v for k, v in parts if k == "v1"]
+        if not stamp.isdigit() or not sigs or abs(time.time() - int(stamp)) > tolerance:
+            return False
+        expected = hmac.new(self.webhook_secret.encode(), f"{stamp}.".encode() + payload, hashlib.sha256).hexdigest()
+        return any(hmac.compare_digest(expected, sig) for sig in sigs)
+
+
 class FakeGateway:
     """Local-only gateway: the 'payment window' is a page in our own frontend."""
 
     name = "fake"
+    webhook_path = ""
 
     def create_payment_link(self, order, continue_url, cancel_url, callback_url):
         return f"fake-{order.order_id}", f"{settings.PUBLIC_SITE_URL}/payments/fake/{order.order_id}"
@@ -140,6 +243,11 @@ class FakeGateway:
 
 
 def get_gateway():
+    provider = settings.PAYMENT_PROVIDER
+    if settings.STRIPE_SECRET_KEY and provider in ("", "stripe"):
+        return StripeGateway(settings.STRIPE_SECRET_KEY, settings.STRIPE_WEBHOOK_SECRET)
+    if provider not in ("", "paymentwings"):
+        raise PaymentError("Payments are not configured.")
     if settings.PAYMENTWINGS_PUBLIC_KEY and settings.PAYMENTWINGS_PRIVATE_KEY:
         return PaymentWingsGateway(settings.PAYMENTWINGS_PUBLIC_KEY, settings.PAYMENTWINGS_PRIVATE_KEY,
                                    settings.PAYMENTWINGS_WEBHOOK_KEY, settings.PAYMENTWINGS_BASE_URL)
@@ -193,7 +301,7 @@ def start_checkout(user, ad: Ad | None, product: Product, offer=None, addons=())
         order,
         continue_url=f"{site}/payments/return?order={order.order_id}",
         cancel_url=f"{site}/payments/return?order={order.order_id}&cancelled=1",
-        callback_url=f"{settings.PUBLIC_API_URL}/api/payments/paymentwings/webhook",
+        callback_url=f"{settings.PUBLIC_API_URL}{gateway.webhook_path}",
     )
     order.gateway_payment_id = payment_id
     order.payment_url = url

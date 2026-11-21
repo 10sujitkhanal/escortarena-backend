@@ -573,7 +573,7 @@ class OrderAdmin(PhotoColumnMixin, admin.ModelAdmin):
             payments.refresh_order(order)
         self.message_user(request, "Checked the selected orders.")
 
-    @admin.action(description="Mark refunded (refund the money in the PaymentWings portal first)")
+    @admin.action(description="Refund (Stripe: money goes back to the card automatically)")
     def refund(self, request, queryset):
         done = 0
         for order in queryset:
@@ -583,8 +583,8 @@ class OrderAdmin(PhotoColumnMixin, admin.ModelAdmin):
             except payments.PaymentError as exc:
                 self.message_user(request, f"{order.order_id}: {exc}", level=messages.ERROR)
         if done:
-            self.message_user(request, f"Marked {done} order(s) refunded and took back their coins. Refund the money in the PaymentWings portal "
-                              "if you haven't yet, and adjust the ads' tiers if needed.")
+            self.message_user(request, f"Refunded {done} order(s) and took back their coins. Stripe orders are refunded to the card "
+                              "automatically; adjust the ads' tiers if needed.")
 
 
 class MessageInline(admin.TabularInline):

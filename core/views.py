@@ -1163,6 +1163,34 @@ class OrderStatusView(APIView):
         return Response(s.OrderSerializer(order).data)
 
 
+class StripeWebhookView(APIView):
+    """Stripe webhook. Checked with the Stripe-Signature header; the session is then re-read from Stripe."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = []
+
+    def post(self, request):
+        gateway = payments.get_gateway()
+        if gateway.name != "stripe" or not gateway.verify_webhook(request.body, request.headers.get("Stripe-Signature", "")):
+            return Response({"detail": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            event = json.loads(request.body)
+        except ValueError:
+            return Response({"detail": "Invalid body"}, status=status.HTTP_400_BAD_REQUEST)
+        if not str(event.get("type", "")).startswith("checkout.session."):
+            return Response({"ok": True})  # other events are not used
+        session_id = str(((event.get("data") or {}).get("object") or {}).get("id") or "")
+        order = Order.objects.filter(gateway="stripe", gateway_payment_id=session_id).first() if session_id else None
+        if order is None:
+            return Response({"detail": "Unknown order"}, status=status.HTTP_200_OK)  # acknowledge so Stripe stops retrying
+        try:
+            payments.apply_gateway_state(order.pk, gateway.fetch(session_id))
+        except payments.PaymentError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"ok": True})
+
+
 class PaymentWingsWebhookView(APIView):
     """PaymentWings server-to-server webhook. Authenticated by its md5 signature, not by session."""
 

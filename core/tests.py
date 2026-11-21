@@ -562,6 +562,106 @@ class ConcurrentSettingsTests(Base):
         self.assertEqual((self.visitor.sender_name, self.visitor.phone), ("neutral", "20304050"))
 
 
+import json  # noqa: E402
+from .models import Tier  # noqa: E402
+
+
+@override_settings(STRIPE_SECRET_KEY="sk_test_x", STRIPE_WEBHOOK_SECRET="whsec_test", PAYMENT_PROVIDER="",
+                   PUBLIC_SITE_URL="https://velora.test", PUBLIC_API_URL="https://velora.test")
+class StripeTests(Base):
+    SID = "cs_test_123"
+
+    def setUp(self):
+        super().setUp()
+        self.ad = self.make_ad()
+        self.ad.approve()
+        self.client.force_authenticate(self.adv)
+        self.session = {"id": self.SID, "url": f"https://checkout.stripe.com/c/pay/{self.SID}", "status": "open",
+                        "payment_status": "unpaid", "currency": "usd", "amount_total": None, "client_reference_id": None}
+        self.calls = []
+
+        def fake_request(gw, method, path, params=None):
+            self.calls.append((method, path, params))
+            if path == "/v1/refunds":
+                return {"id": "re_1", "status": "succeeded"}
+            return dict(self.session)
+
+        patcher = mock.patch.object(payments.StripeGateway, "_request", fake_request)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def checkout(self, code="premium-30d"):
+        res = self.client.post(f"/api/my-ads/{self.ad.id}/checkout", {"product": code}, format="json")
+        self.assertEqual(res.status_code, 201, res.data)
+        return Order.objects.get(order_id=res.data["order_id"]), res.data
+
+    def mark_paid(self, order, amount=None):
+        self.session.update(status="complete", payment_status="paid", client_reference_id=order.order_id,
+                            amount_total=order.amount if amount is None else amount)
+
+    def webhook(self, payload: bytes, secret="whsec_test", stamp=None):
+        import hashlib, hmac as _hmac, time as _time
+        stamp = stamp or int(_time.time())
+        sig = _hmac.new(secret.encode(), f"{stamp}.".encode() + payload, hashlib.sha256).hexdigest()
+        return self.client.post("/api/payments/stripe/webhook", payload, content_type="application/json",
+                                HTTP_STRIPE_SIGNATURE=f"t={stamp},v1={sig}")
+
+    def event(self, kind="checkout.session.completed"):
+        return json.dumps({"type": kind, "data": {"object": {"id": self.SID}}}).encode()
+
+    def test_creates_checkout_session(self):
+        order, data = self.checkout()
+        self.assertEqual(data["payment_url"], f"https://checkout.stripe.com/c/pay/{self.SID}")
+        self.assertEqual((order.gateway, order.gateway_payment_id), ("stripe", self.SID))
+        method, path, params = self.calls[0]
+        self.assertEqual((method, path), ("POST", "/v1/checkout/sessions"))
+        self.assertEqual(params["line_items[0][price_data][unit_amount]"], order.amount)
+        self.assertEqual(params["line_items[0][price_data][currency]"], "usd")
+        self.assertEqual(params["client_reference_id"], order.order_id)
+        self.assertIn(order.order_id, params["success_url"])
+
+    def test_webhook_marks_paid_and_applies_plan(self):
+        order, _ = self.checkout()
+        self.mark_paid(order)
+        self.assertEqual(self.webhook(self.event()).status_code, 200)
+        order.refresh_from_db(); self.ad.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PAID)
+        self.assertEqual(self.ad.tier, Tier.PREMIUM)
+
+    def test_bad_or_old_signature_rejected(self):
+        order, _ = self.checkout()
+        self.mark_paid(order)
+        self.assertEqual(self.webhook(self.event(), secret="wrong").status_code, 400)
+        self.assertEqual(self.webhook(self.event(), stamp=1_000_000).status_code, 400)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PENDING)
+
+    def test_return_page_check_and_underpayment(self):
+        order, _ = self.checkout()
+        self.mark_paid(order, amount=order.amount - 1)
+        payments.refresh_order(order); order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PENDING)  # paid less than the price: not accepted
+        self.mark_paid(order)
+        payments.refresh_order(order); order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PAID)
+
+    def test_expired_session_fails_order(self):
+        order, _ = self.checkout()
+        self.session.update(status="expired")
+        self.webhook(self.event("checkout.session.expired")); order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.FAILED)
+
+    def test_refund_calls_stripe(self):
+        order, _ = self.checkout()
+        self.mark_paid(order)
+        payments.refresh_order(order)
+        self.session["payment_intent"] = "pi_1"
+        payments.refund_order(Order.objects.get(pk=order.pk))
+        self.assertEqual(self.calls[-1][:2], ("POST", "/v1/refunds"))
+        self.assertEqual(self.calls[-1][2], {"payment_intent": "pi_1", "amount": order.amount})
+        self.assertEqual(Order.objects.get(pk=order.pk).status, Order.Status.REFUNDED)
+
+
 class MessagingTests(Base):
     def setUp(self):
         super().setUp()

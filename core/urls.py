@@ -49,6 +49,7 @@ urlpatterns = [
     path("diamonds", views.DiamondsView.as_view()),
     path("diamonds/buy", views.BuyDiamondsView.as_view()),
     path("payments", views.MyOrdersView.as_view()),
+    path("payments/stripe/webhook", views.StripeWebhookView.as_view()),
     path("payments/paymentwings/webhook", views.PaymentWingsWebhookView.as_view()),
     path("payments/fake/<str:order_id>", views.FakePaymentView.as_view()),
     path("payments/<str:order_id>", views.OrderStatusView.as_view()),

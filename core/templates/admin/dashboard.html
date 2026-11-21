@@ -137,16 +137,6 @@
     </a>
   </div>
 
-  {# Needs attention #}
-  <div class="ea-card">
-    <h2><span><svg class="ic"><use href="#i-bell"/></svg>Needs attention</span></h2>
-    <div class="ea-alerts">
-      {% for a in alerts %}
-        <a class="ea-alert{% if a.count %} on{% endif %}" href="{{ a.url }}"><span>{{ a.label }}</span><span class="c">{{ a.count }}</span></a>
-      {% endfor %}
-    </div>
-  </div>
-
   <div class="ea-grid">
     {# ID verification requests #}
     <div class="ea-card">
